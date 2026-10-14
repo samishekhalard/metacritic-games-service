@@ -1,0 +1,124 @@
+"""Tests for scrape/listing.py — parsing both HTML pages and API JSON items."""
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from metacrawl.scrape.listing import GameSummary, PlatformScore, _image_url, parse_listing, to_summary
+
+
+# ---------------------------------------------------------------------------
+# parse_listing() on browse.html
+# ---------------------------------------------------------------------------
+
+def test_browse_html_yields_24_games(browse_html):
+    games = parse_listing(browse_html)
+    assert len(games) == 24
+
+
+def test_browse_game_has_required_fields(browse_html):
+    games = parse_listing(browse_html)
+    first = games[0]
+    assert isinstance(first.external_id, int) and first.external_id > 0
+    assert isinstance(first.slug, str) and first.slug
+    assert isinstance(first.title, str) and first.title
+    assert first.url.startswith("https://www.metacritic.com/game/")
+
+
+def test_browse_all_games_are_game_summaries(browse_html):
+    games = parse_listing(browse_html)
+    assert all(isinstance(g, GameSummary) for g in games)
+
+
+# ---------------------------------------------------------------------------
+# to_summary() on API JSON items
+# ---------------------------------------------------------------------------
+
+def test_api_new_releases_yields_20_summaries(api_new_releases):
+    items = api_new_releases["data"]["items"]
+    summaries = [to_summary(item) for item in items if isinstance(item, dict)]
+    summaries = [s for s in summaries if s is not None]
+    assert len(summaries) == 20
+
+
+def test_api_page2_yields_24_summaries(api_page2):
+    items = api_page2["data"]["items"]
+    summaries = [to_summary(item) for item in items if isinstance(item, dict)]
+    summaries = [s for s in summaries if s is not None]
+    assert len(summaries) == 24
+
+
+def test_api_item_fields_correct(api_new_releases):
+    item = api_new_releases["data"]["items"][0]
+    s = to_summary(item)
+    assert s is not None
+    assert s.external_id == item["id"]
+    assert s.slug == item["slug"]
+    assert s.title == item["title"]
+
+
+def test_api_item_metascore_parsed(api_new_releases):
+    # First item in the new-releases fixture has score=68 (over-the-hill)
+    item = api_new_releases["data"]["items"][0]
+    s = to_summary(item)
+    assert s.metascore == item["criticScoreSummary"]["score"]
+
+
+def test_api_item_platform_names(api_new_releases):
+    item = api_new_releases["data"]["items"][0]
+    s = to_summary(item)
+    assert len(s.platforms) == len(item["platforms"])
+    expected = {p["name"] for p in item["platforms"]}
+    actual = {p.name for p in s.platforms}
+    assert actual == expected
+
+
+def test_api_item_with_null_description(api_new_releases):
+    # Unreleased / minimal entries have null description — must not crash.
+    null_desc = next(
+        (item for item in api_new_releases["data"]["items"] if item.get("description") is None),
+        None,
+    )
+    if null_desc is None:
+        pytest.skip("fixture has no item with null description")
+    s = to_summary(null_desc)
+    assert s is not None
+    assert s.description is None
+
+
+def test_api_item_genre_names(api_new_releases):
+    item = api_new_releases["data"]["items"][0]
+    s = to_summary(item)
+    expected = [g["name"] for g in item["genres"] if isinstance(g, dict) and g.get("name")]
+    assert s.genres == expected
+
+
+def test_to_summary_returns_none_for_non_game():
+    bad = {"id": 1, "slug": "x", "title": "X", "type": "movie-title"}
+    assert to_summary(bad) is None
+
+
+def test_to_summary_returns_none_for_missing_slug():
+    assert to_summary({"id": 1, "title": "X"}) is None
+
+
+# ---------------------------------------------------------------------------
+# _image_url() helper
+# ---------------------------------------------------------------------------
+
+def test_image_url_prefers_direct_url():
+    img = {"imageUrl": "https://cdn.example.com/cover.jpg", "bucketPath": "/foo/bar.jpg",
+           "width": 460, "height": 215}
+    assert _image_url(img) == "https://cdn.example.com/cover.jpg"
+
+
+def test_image_url_falls_back_to_bucket_path():
+    img = {"imageUrl": None, "bucketPath": "/provider/7/2/123.jpg", "width": 373, "height": 560}
+    url = _image_url(img)
+    assert url == "https://www.metacritic.com/a/img/resize/373/560/catalog/provider/7/2/123.jpg"
+
+
+def test_image_url_none_for_null_image():
+    assert _image_url(None) is None
+    assert _image_url({}) is None
