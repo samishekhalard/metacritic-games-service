@@ -1,17 +1,19 @@
 """
-Web routes: game list, game detail, crawl trigger/status.
+Web routes: game list, game detail, crawl trigger/status, health check.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
+import httpx
 from fastapi import APIRouter, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 
 from ..config import settings
-from ..db.models import Game, PlatformScore, Review, Summary, game_genres
+from ..db.models import CrawlRun, Embedding, Game, PlatformScore, Review, Summary, game_genres
+from ..embed import embedder_enabled
 from ..similar import find_similar
 
 _TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
@@ -151,10 +153,21 @@ def game_similar(request: Request, slug: str):
             result_platforms[r.game.id] = session.execute(
                 select(PlatformScore.platform).where(PlatformScore.game_id == r.game.id)
             ).scalars().all()
+    # Note shown in UI when embedder is disabled or no embeddings exist yet
+    embed_note = None
+    if not embedder_enabled():
+        embed_note = (
+            "Embedder not configured — results use genre/platform overlap only. "
+            "Set MC_EMBED_PROVIDER to enable text-similarity."
+        )
+    elif similar and all(r.method == "metadata_overlap" for r in similar):
+        embed_note = "No text embeddings yet — run a crawl to generate them."
+
     return templates.TemplateResponse("partials/similar.html", {
         "request": request,
         "similar": similar,
         "result_platforms": result_platforms,
+        "embed_note": embed_note,
     })
 
 
@@ -188,3 +201,102 @@ def crawl_status(request: Request):
         f' hx-get="/api/crawl/status" hx-trigger="{trigger}" hx-swap="outerHTML"'
         f' hx-target="#crawl-badge">{label}</span>'
     )
+
+
+# ── Health check ──────────────────────────────────────────────────────────────
+
+def _ping(base_url: str, api_key: str, timeout: float = 3.0) -> bool:
+    """
+    Check whether an OpenAI-compatible provider is reachable.
+    Hits GET /models (returns any response including 4xx = reachable).
+    Returns False only on connection error or timeout.
+    """
+    try:
+        url = base_url.rstrip("/") + "/models"
+        headers = {"Authorization": f"Bearer {api_key}"}
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.get(url, headers=headers)
+            return resp.status_code < 500
+    except Exception:
+        return False
+
+
+@router.get("/health")
+def health(request: Request):
+    """
+    One-shot status page: DB counts, LLM/embedder reachability, last crawl.
+
+    Returns HTTP 200 when everything is functional.
+    Returns HTTP 503 when the LLM is unreachable (embedder degraded is OK).
+    """
+    Session = request.app.state.session_factory
+
+    # ── DB counts ─────────────────────────────────────────────────────────
+    with Session() as session:
+        game_count    = session.query(Game).count()
+        summary_count = session.query(Summary).count()
+        review_count  = session.query(Review).count()
+        embed_count   = session.query(Embedding).count()
+        last_run = (
+            session.query(CrawlRun)
+            .order_by(CrawlRun.id.desc())
+            .first()
+        )
+        last_ok_run = (
+            session.query(CrawlRun)
+            .filter(CrawlRun.status == "done")
+            .order_by(CrawlRun.id.desc())
+            .first()
+        )
+
+    # ── Provider checks (run in parallel via threads would be nice, but
+    #    sequential is fine for a health endpoint — total budget ~6 s) ────
+    llm_reachable = _ping(settings.llm_base_url, settings.llm_api_key)
+
+    embed_cfg = embedder_enabled()
+    embed_reachable = _ping(settings.llm_base_url, settings.llm_api_key) if embed_cfg else None
+
+    payload = {
+        "db": {
+            "ok": True,
+            "games": game_count,
+            "summaries": summary_count,
+            "reviews": review_count,
+            "embeddings": embed_count,
+        },
+        "llm": {
+            "provider": settings.llm_provider,
+            "base_url": settings.llm_base_url,
+            "model": settings.llm_model,
+            "reachable": llm_reachable,
+        },
+        "embedder": {
+            "enabled": embed_cfg,
+            "provider": settings.embed_provider if embed_cfg else None,
+            "model": settings.llm_embed_model if embed_cfg else None,
+            "reachable": embed_reachable,
+            "note": None if embed_cfg else (
+                "Set MC_EMBED_PROVIDER to enable text-similarity; "
+                "similarity falls back to genre/platform overlap."
+            ),
+        },
+        "last_crawl": {
+            "id": last_run.id,
+            "started_at": str(last_run.started_at),
+            "status": last_run.status,
+            "source": last_run.source,
+            "games_created": last_run.games_created,
+            "errors": last_run.errors,
+            "llm_errors": getattr(last_run, "llm_errors", 0),
+            "embed_errors": getattr(last_run, "embed_errors", 0),
+        } if last_run else None,
+        "last_successful_crawl": {
+            "id": last_ok_run.id,
+            "started_at": str(last_ok_run.started_at),
+            "games_created": last_ok_run.games_created,
+        } if last_ok_run else None,
+        "crawl_worker_running": request.app.state.worker.is_running,
+    }
+
+    status_code = 200 if llm_reachable else 503
+    return JSONResponse(content=payload, status_code=status_code)

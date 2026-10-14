@@ -103,31 +103,35 @@ def generate_summaries(
     session: Session,
     game: Game,
     llm: LLMCallable,
-) -> tuple[bool, bool]:
+) -> tuple:
     """
     Generate and persist critic + user summaries for a game.
 
-    Returns (critic_written, user_written).
-    Skips a kind if the game has no quoted reviews of that kind.
-    Replaces any existing summary of that kind on re-crawl.
+    Returns (critic_written, user_written, llm_errors).
+      critic_written / user_written — True if a summary row was written.
+      llm_errors — count of times the LLM was called but failed (returned None
+                   or malformed JSON).  Zero if there were no reviews to
+                   summarise (that is a skip, not an error).
+                   The crawl loop stores this in CrawlRun.llm_errors so
+                   failures are visible in /health and the monitor.
     """
     all_reviews: list[Review] = (
         session.query(Review).filter_by(game_id=game.id).all()
     )
 
-    critic_written = _summarise_kind(
+    critic_written, c_failed = _summarise_kind(
         session, game, all_reviews,
         kind="critic",
         sampler=lambda r: _sample_critic(r, settings.llm_max_reviews),
         llm=llm,
     )
-    user_written = _summarise_kind(
+    user_written, u_failed = _summarise_kind(
         session, game, all_reviews,
         kind="user",
         sampler=lambda r: _sample_user(r, settings.llm_max_reviews),
         llm=llm,
     )
-    return critic_written, user_written
+    return critic_written, user_written, int(c_failed) + int(u_failed)
 
 
 def _summarise_kind(
@@ -138,11 +142,12 @@ def _summarise_kind(
     kind: str,
     sampler: Callable,
     llm: LLMCallable,
-) -> bool:
+) -> tuple:
+    """Returns (written: bool, failed: bool)."""
     picked, rule = sampler(all_reviews)
     if not picked:
         log.debug("skip %s summary for %s — no %s reviews with quotes", kind, game.slug, kind)
-        return False
+        return False, False
 
     prompt_text = _PROMPT.format(
         n=len(picked),
@@ -157,16 +162,16 @@ def _summarise_kind(
 
     raw = llm(messages)
     if raw is None:
-        log.warning("LLM returned None for %s %s summary", game.slug, kind)
-        return False
+        log.warning("LLM returned None for %s %s summary — counted as llm_error", game.slug, kind)
+        return False, True
 
     parsed = _parse_llm_response(raw)
     if parsed is None:
         log.warning(
-            "unparseable LLM response for %s %s: %r",
+            "unparseable LLM response for %s %s: %r — counted as llm_error",
             game.slug, kind, raw[:200],
         )
-        return False
+        return False, True
 
     session.execute(
         delete(Summary).where(
@@ -184,4 +189,4 @@ def _summarise_kind(
         sampling_rule=rule,
         generated_at=datetime.utcnow(),
     ))
-    return True
+    return True, False

@@ -1,4 +1,7 @@
 <h2>Similar Games</h2>
+{% if embed_note %}
+<p class="embed-note">ℹ {{ embed_note }}</p>
+{% endif %}
 {% if not similar %}
 <p class="placeholder-text">Not enough games in the database yet — run more crawls to populate neighbours.</p>
 {% else %}

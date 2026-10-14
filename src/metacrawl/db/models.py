@@ -133,6 +133,8 @@ class CrawlRun(Base):
     games_created = Column(Integer, default=0)
     games_updated = Column(Integer, default=0)
     games_skipped = Column(Integer, default=0)   # already processed today
-    errors = Column(Integer, default=0)
+    errors = Column(Integer, default=0)          # hard errors (detail/upsert failures)
+    llm_errors = Column(Integer, default=0)      # LLM returned None or malformed JSON
+    embed_errors = Column(Integer, default=0)    # embedder returned None
     status = Column(String)           # 'running' | 'done' | 'failed'
     next_browse_url = Column(String)  # links.next.href; read by next browse run

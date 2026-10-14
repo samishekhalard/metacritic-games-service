@@ -166,7 +166,7 @@ def test_no_reviews_creates_no_summary(db):
     Session, _ = db
     with Session() as s:
         game = _make_game(s)
-        c, u = generate_summaries(s, game, _good_llm)
+        c, u, _ = generate_summaries(s, game, _good_llm)
         s.commit()
         game_id = game.id
 
@@ -181,7 +181,7 @@ def test_zero_critic_reviews_skips_critic_summary(db):
     with Session() as s:
         game = _make_game(s, external_id=2)
         _add_reviews(s, game, kind="user", n=5)
-        c, u = generate_summaries(s, game, _good_llm)
+        c, u, _ = generate_summaries(s, game, _good_llm)
         s.commit()
         game_id = game.id
 
@@ -198,7 +198,7 @@ def test_zero_user_reviews_skips_user_summary(db):
     with Session() as s:
         game = _make_game(s, external_id=3)
         _add_reviews(s, game, kind="critic", n=5)
-        c, u = generate_summaries(s, game, _good_llm)
+        c, u, _ = generate_summaries(s, game, _good_llm)
         s.commit()
         game_id = game.id
 
@@ -368,7 +368,7 @@ def test_reviews_without_quotes_not_counted(db):
                 quote=None, review_date="2024-01-01",
             ))
         s.flush()
-        c, _ = generate_summaries(s, game, _good_llm)
+        c, _, _ = generate_summaries(s, game, _good_llm)
         s.commit()
 
     assert c is False

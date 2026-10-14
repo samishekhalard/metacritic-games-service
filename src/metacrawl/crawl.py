@@ -82,6 +82,7 @@ def do_crawl(
     embedder: EmbedCallable = _embedder if _embedder is not None else call_embedder
 
     created = updated = skipped = errors = 0
+    llm_errs = embed_errs = 0
     games_seen = 0
     next_url: str | None = None
     status = "done"
@@ -139,10 +140,14 @@ def do_crawl(
                         apply_detail(session, game, detail)
                         session.flush()
 
-                        embed_game(session, game, embedder)
-                        session.flush()
+                        outcome = embed_game(session, game, embedder)
+                        if outcome.stored:
+                            session.flush()
+                        elif outcome.failed:
+                            embed_errs += 1
 
-                        generate_summaries(session, game, call_llm)
+                        _, _, llm_fail = generate_summaries(session, game, call_llm)
+                        llm_errs += llm_fail
 
                     except Exception:
                         log.exception("detail/summary failed for %s", summary.slug)
@@ -166,6 +171,8 @@ def do_crawl(
             run.games_updated = updated
             run.games_skipped = skipped
             run.errors = errors
+            run.llm_errors = llm_errs
+            run.embed_errors = embed_errs
             if source == "browse":
                 run.next_browse_url = next_url
             session.commit()
@@ -186,7 +193,8 @@ def main() -> None:
 
     print(
         f"Done: {run.games_created} created, {run.games_updated} updated, "
-        f"{run.games_skipped} skipped, {run.errors} errors  ({run.status}).\n"
+        f"{run.games_skipped} skipped | errors: {run.errors} hard, "
+        f"{run.llm_errors} llm, {run.embed_errors} embed  ({run.status}).\n"
     )
     _print_games(engine)
     _print_run(run)

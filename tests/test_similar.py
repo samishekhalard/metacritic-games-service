@@ -133,11 +133,12 @@ def test_embed_game_stores_vector(db):
                           title="Action RPG", description="An action RPG.")
         _add_genres(s, game, ["Action", "RPG"])
         _add_platform(s, game, "PC")
-        stored = embed_game(s, game, _fake_embed)
+        outcome = embed_game(s, game, _fake_embed)
         s.commit()
         game_id = game.id
 
-    assert stored is True
+    assert outcome.stored is True
+    assert outcome.failed is False
     with Session() as s:
         emb = s.execute(select(Embedding).where(Embedding.game_id == game_id)).scalar_one()
     vector = json.loads(emb.vector)
@@ -152,26 +153,29 @@ def test_embed_game_no_description_returns_false(db):
     with Session() as s:
         game = _make_game(s, external_id=101, slug="no-desc", title="No Desc",
                           description=None)
-        stored = embed_game(s, game, _fake_embed)
+        outcome = embed_game(s, game, _fake_embed)
         s.commit()
         game_id = game.id
 
-    assert stored is False
+    assert outcome.stored is False
+    assert outcome.failed is False  # no description = skip, not error
     with Session() as s:
         count = s.execute(select(Embedding).where(Embedding.game_id == game_id)).scalars().all()
     assert len(count) == 0
 
 
-def test_embed_game_failed_embedder_returns_false(db):
+def test_embed_game_failed_embedder_is_error(db):
+    """When embedder returns None, outcome.failed is True so the crawl can count it."""
     Session, _ = db
     with Session() as s:
         game = _make_game(s, external_id=102, slug="fail-game", title="Fail",
                           description="Some description.")
-        stored = embed_game(s, game, _null_embed)
+        outcome = embed_game(s, game, _null_embed)
         s.commit()
         game_id = game.id
 
-    assert stored is False
+    assert outcome.stored is False
+    assert outcome.failed is True   # embedder called but failed = error
     with Session() as s:
         count = s.execute(select(Embedding).where(Embedding.game_id == game_id)).scalars().all()
     assert len(count) == 0

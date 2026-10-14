@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from ..db.session import init_db, make_engine, make_session_factory
 from ..schedule import make_scheduler
+from ..seed import restore_if_empty
 from ..worker import CrawlWorker
 from .routes import router
 
@@ -24,6 +25,7 @@ _STATIC = Path(__file__).parent.parent / "static"
 async def lifespan(app: FastAPI):
     engine = make_engine()
     init_db(engine)
+    restore_if_empty(engine)   # no-op when DB has games or no seed file exists
     session_factory = make_session_factory(engine)
     worker = CrawlWorker(session_factory)
     scheduler = make_scheduler(worker)

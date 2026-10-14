@@ -16,23 +16,32 @@ class Settings(BaseSettings):
         "rate-limited 1 req/s, disk-cached; not a banned bot)"
     )
 
-    # LLM — Ollama default; override with any OpenAI-compatible endpoint.
-    # DAY_TZ note: "today" is defined in UTC throughout this service.
-    # Midnight UTC is the day boundary; storing as naive datetimes (utcnow()).
-    # To shift to another timezone set MC_DAY_TZ and update schedule.py.
-    llm_base_url: str = "http://localhost:11434/v1"   # Ollama
+    # ── LLM provider ─────────────────────────────────────────────────────────
+    # MC_LLM_PROVIDER = "ollama" | "openai-compatible"
+    # Both values use the same OpenAI-compatible chat-completions API, so no
+    # code changes are needed to switch.  Groq example:
+    #   MC_LLM_PROVIDER=openai-compatible
+    #   MC_LLM_BASE_URL=https://api.groq.com/openai/v1
+    #   MC_LLM_API_KEY=gsk_...
+    #   MC_LLM_MODEL=mixtral-8x7b-32768
+    llm_provider: str = "ollama"
+    llm_base_url: str = "http://localhost:11434/v1"
     llm_api_key: str = "ollama"
     llm_model: str = "qwen2.5:7b"
-    # cap per review kind before sending to LLM
-    llm_max_reviews: int = 40
+    llm_max_reviews: int = 40     # cap per review kind before sending to LLM
 
-    # Embedding model for game similarity (nomic-embed-text via Ollama).
-    # Uses the same llm_base_url / llm_api_key endpoint.
-    llm_embed_model: str = "nomic-embed-text"
+    # ── Embedder provider ─────────────────────────────────────────────────────
+    # MC_EMBED_PROVIDER = "" | "ollama" | "openai-compatible"
+    # Empty string disables the embedder entirely.  When disabled, find_similar()
+    # falls back to weighted Jaccard (genre 60 % + platform 40 %) for ALL games
+    # and marks every result method="metadata_overlap".  The API response and UI
+    # both say the embedder is not configured so the degradation is visible.
+    embed_provider: str = "ollama"
+    llm_embed_model: str = "nomic-embed-text"   # nomic-embed-text via Ollama
 
-    # Shared secret for POST /api/crawl/run.
-    # Empty string = no authentication (safe for local dev).
-    # Set MC_CRAWL_SECRET on Render so only the external cron can trigger crawls.
+    # ── Shared secret ─────────────────────────────────────────────────────────
+    # POST /api/crawl/run requires X-Crawl-Secret: <value> when this is set.
+    # Empty = no auth (local dev).  Set MC_CRAWL_SECRET on Render.
     crawl_secret: str = ""
 
     model_config = {"env_prefix": "MC_"}

@@ -16,15 +16,25 @@ O(tens of thousands) this should be replaced with an ANN index (e.g. FAISS).
 FALLBACK
 ────────
 Games without a description (common for unreleased titles) are not embedded.
-When computing similarity against such a game, `find_similar` (similar.py)
-falls back to weighted Jaccard over genres (60 %) and platforms (40 %).
-The method field in each SimilarResult records which path was taken so the
-UI can show it to the user.
+When MC_EMBED_PROVIDER is empty the embedder is disabled globally and all
+similarity uses metadata overlap.  When computing similarity against a game
+that lacks an embedding, find_similar() falls back to weighted Jaccard over
+genres (60 %) and platforms (40 %).  The method field in each SimilarResult
+records which path was taken so the UI can show it to the user.
+
+FAILURE TRACKING
+────────────────
+embed_game() returns an EmbedOutcome namedtuple with two fields:
+  stored  — True if the vector was written to the database
+  failed  — True if the embedder was called but returned None (error, not skip)
+
+The crawl loop accumulates failed counts into CrawlRun.embed_errors so
+failures are visible in /health and the monitor — never silently discarded.
 
 CROSS-CHECK: Metacritic related-carousel
 ────────────────────────────────────────
 The related-games carousel on the Metacritic game page is parsed in
-scrape/detail.py (RelatedItem) and logged at DEBUG level in crawl.py.
+scrape/detail.py and logged at DEBUG level in crawl.py.
 It is never used as the answer shown in the UI — the assignment requires
 candidates from OUR database only.
 """
@@ -33,7 +43,7 @@ from __future__ import annotations
 import json
 import logging
 import math
-from typing import Callable, List, Optional
+from typing import Callable, List, NamedTuple, Optional
 
 import httpx
 from sqlalchemy import delete, select
@@ -43,8 +53,24 @@ from .db.models import Embedding, PlatformScore, game_genres
 
 log = logging.getLogger(__name__)
 
-# Type alias — avoids `Optional[List[float]]` runtime issue on Py 3.9
 EmbedCallable = Callable[[str], "Optional[List[float]]"]
+
+
+class EmbedOutcome(NamedTuple):
+    stored: bool    # True if vector was written to the database
+    failed: bool    # True if embedder was called and returned None (counts as error)
+
+
+EMBED_STORED   = EmbedOutcome(stored=True,  failed=False)
+EMBED_SKIPPED  = EmbedOutcome(stored=False, failed=False)   # no description / disabled
+EMBED_FAILED   = EmbedOutcome(stored=False, failed=True)    # embedder returned None
+
+
+# ── Provider availability ─────────────────────────────────────────────────────
+
+def embedder_enabled() -> bool:
+    """False when MC_EMBED_PROVIDER is empty — fall back to metadata-overlap."""
+    return bool(settings.embed_provider)
 
 
 # ── Text construction ─────────────────────────────────────────────────────────
@@ -103,7 +129,7 @@ def call_embedder(text: str, *, _transport=None) -> "Optional[List[float]]":
             resp.raise_for_status()
             return resp.json()["data"][0]["embedding"]
     except Exception:
-        log.warning("embedding call failed for model=%s", settings.llm_embed_model, exc_info=True)
+        log.warning("embedding call failed (model=%s)", settings.llm_embed_model, exc_info=True)
         return None
 
 
@@ -116,20 +142,24 @@ def _store(session, game_id: int, vector: list, model: str) -> None:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def embed_game(session, game, embedder: EmbedCallable) -> bool:
+def embed_game(session, game, embedder: EmbedCallable) -> EmbedOutcome:
     """
     Compute and store an embedding for `game`.
 
-    Returns True if the embedding was stored.
-    Returns False without storing if:
-    - game.description is None  (fallback to metadata overlap at query time)
-    - the embedder returns None  (e.g. Ollama is offline; logged as WARNING)
+    Returns:
+      EMBED_STORED   — vector written to DB
+      EMBED_SKIPPED  — embedder disabled, or game has no description (use metadata fallback)
+      EMBED_FAILED   — embedder was called but returned None (increment embed_errors)
 
-    The caller must flush/commit after this returns True.
+    The caller must flush/commit after EMBED_STORED.
     """
+    if not embedder_enabled():
+        log.debug("skip embedding for %s — embedder not configured", game.slug)
+        return EMBED_SKIPPED
+
     if not game.description:
         log.debug("skip embedding for %s — no description (will use metadata fallback)", game.slug)
-        return False
+        return EMBED_SKIPPED
 
     genres = session.execute(
         select(game_genres.c.genre).where(game_genres.c.game_id == game.id)
@@ -141,9 +171,9 @@ def embed_game(session, game, embedder: EmbedCallable) -> bool:
     text = build_embed_text(game.title, game.description, list(genres), list(platforms))
     vector = embedder(text)
     if vector is None:
-        log.warning("embedder returned None for %s; no embedding stored", game.slug)
-        return False
+        log.warning("embedder returned None for %s — embedding not stored", game.slug)
+        return EMBED_FAILED
 
     _store(session, game.id, vector, settings.llm_embed_model)
     log.debug("stored %d-dim embedding for %s", len(vector), game.slug)
-    return True
+    return EMBED_STORED
