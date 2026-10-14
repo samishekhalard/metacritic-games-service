@@ -26,6 +26,15 @@ class Settings(BaseSettings):
     # cap per review kind before sending to LLM
     llm_max_reviews: int = 40
 
+    # Embedding model for game similarity (nomic-embed-text via Ollama).
+    # Uses the same llm_base_url / llm_api_key endpoint.
+    llm_embed_model: str = "nomic-embed-text"
+
+    # Shared secret for POST /api/crawl/run.
+    # Empty string = no authentication (safe for local dev).
+    # Set MC_CRAWL_SECRET on Render so only the external cron can trigger crawls.
+    crawl_secret: str = ""
+
     model_config = {"env_prefix": "MC_"}
 
 

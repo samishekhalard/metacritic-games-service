@@ -35,6 +35,7 @@ from .api.finder import fetch_browse_page, fetch_browse_url, fetch_new_releases
 from .db.models import CrawlRun, Game
 from .db.session import init_db, make_engine, make_session_factory
 from .db.upsert import apply_detail, upsert_game
+from .embed import EmbedCallable, call_embedder, embed_game
 from .http import HttpClient
 from .llm import call_llm
 from .schedule import decide_crawl_source
@@ -52,6 +53,7 @@ def do_crawl(
     session_factory,
     *,
     trigger: str = "manual",
+    _embedder: "EmbedCallable | None" = None,
 ) -> CrawlRun:
     """
     One run: decide source, fetch listing, detail-fetch new games, summarise.
@@ -76,6 +78,8 @@ def do_crawl(
         session.add(run)
         session.commit()
         run_id = run.id
+
+    embedder: EmbedCallable = _embedder if _embedder is not None else call_embedder
 
     created = updated = skipped = errors = 0
     games_seen = 0
@@ -133,6 +137,9 @@ def do_crawl(
                         if user_revs:
                             detail.user_reviews = user_revs
                         apply_detail(session, game, detail)
+                        session.flush()
+
+                        embed_game(session, game, embedder)
                         session.flush()
 
                         generate_summaries(session, game, call_llm)

@@ -144,9 +144,12 @@
   </section>
   {% endif %}
 
-  <section class="detail-section similar-section">
+  <section class="detail-section similar-section"
+           hx-get="/games/{{ game.slug }}/similar"
+           hx-trigger="load"
+           hx-swap="innerHTML">
     <h2>Similar Games</h2>
-    <p class="placeholder-text">Similarity embeddings not yet computed (step 7).</p>
+    <p class="placeholder-text">Loading…</p>
   </section>
 </div>
 {% endblock %}

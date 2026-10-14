@@ -5,12 +5,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 
+from ..config import settings
 from ..db.models import Game, PlatformScore, Review, Summary, game_genres
+from ..similar import find_similar
 
 _TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
@@ -135,8 +137,34 @@ def game_detail(request: Request, slug: str):
     })
 
 
+@router.get("/games/{slug}/similar", response_class=HTMLResponse)
+def game_similar(request: Request, slug: str):
+    Session = request.app.state.session_factory
+    with Session() as session:
+        game = session.query(Game).filter_by(slug=slug).first()
+        if game is None:
+            return HTMLResponse("")
+        similar = find_similar(session, game, k=5)
+        # Load platforms for each result while the session is open
+        result_platforms: dict = {}
+        for r in similar:
+            result_platforms[r.game.id] = session.execute(
+                select(PlatformScore.platform).where(PlatformScore.game_id == r.game.id)
+            ).scalars().all()
+    return templates.TemplateResponse("partials/similar.html", {
+        "request": request,
+        "similar": similar,
+        "result_platforms": result_platforms,
+    })
+
+
 @router.post("/api/crawl/run", response_class=HTMLResponse)
-def trigger_crawl(request: Request):
+def trigger_crawl(
+    request: Request,
+    x_crawl_secret: str = Header(default=""),
+):
+    if settings.crawl_secret and x_crawl_secret != settings.crawl_secret:
+        raise HTTPException(status_code=403, detail="Invalid crawl secret")
     worker = request.app.state.worker
     started = worker.submit(trigger="manual")
     cls = "badge-running" if started else "badge-idle"

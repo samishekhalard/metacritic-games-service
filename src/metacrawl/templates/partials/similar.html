@@ -1,0 +1,36 @@
+<h2>Similar Games</h2>
+{% if not similar %}
+<p class="placeholder-text">Not enough games in the database yet — run more crawls to populate neighbours.</p>
+{% else %}
+<ul class="similar-list">
+{% for r in similar %}
+<li class="similar-item {% if r.is_weak %}similar-weak{% endif %}">
+  <a href="/games/{{ r.game.slug }}" class="similar-link">
+    {% if r.game.cover_url %}
+    <img src="{{ r.game.cover_url }}" alt="{{ r.game.title }}" class="similar-cover" loading="lazy">
+    {% else %}
+    <div class="similar-cover similar-cover-placeholder"></div>
+    {% endif %}
+    <div class="similar-info">
+      <div class="similar-title">{{ r.game.title }}</div>
+      <div class="similar-platforms">
+        {% for p in result_platforms.get(r.game.id, []) %}
+        <span class="platform-chip">{{ p }}</span>
+        {% endfor %}
+      </div>
+    </div>
+  </a>
+  <div class="similar-score-col">
+    <span class="similar-score {% if r.score_pct >= 60 %}sim-high{% elif r.score_pct >= 30 %}sim-mid{% else %}sim-low{% endif %}"
+          title="{{ '%.3f'|format(r.score) }}">
+      {{ r.score_pct }}%
+    </span>
+    <span class="similar-method">{{ r.method|replace("_", " ") }}</span>
+  </div>
+</li>
+{% endfor %}
+</ul>
+{% if similar and similar[0].is_weak %}
+<p class="similar-note">Scores are low — the database has few games. More crawls will improve results.</p>
+{% endif %}
+{% endif %}
