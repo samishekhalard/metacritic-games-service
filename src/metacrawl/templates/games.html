@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Games — Metacrawl{% endblock %}
+{% block content %}
+<form class="filter-bar"
+      id="filter-form"
+      hx-get="/"
+      hx-target="#results"
+      hx-push-url="true"
+      hx-trigger="change from:select, input changed delay:300ms from:[name='q']">
+  <input type="text" name="q" value="{{ q }}"
+         placeholder="Search games…" class="input-search" autocomplete="off">
+  <select name="platform" class="input-select">
+    <option value="">All platforms</option>
+    {% for p in all_platforms %}
+    <option value="{{ p }}" {% if p == platform %}selected{% endif %}>{{ p }}</option>
+    {% endfor %}
+  </select>
+  <select name="sort" class="input-select">
+    <option value="score" {% if sort == "score" %}selected{% endif %}>Best score</option>
+    <option value="title" {% if sort == "title" %}selected{% endif %}>Title A–Z</option>
+    <option value="date"  {% if sort == "date"  %}selected{% endif %}>Latest</option>
+  </select>
+</form>
+
+<div id="results">
+  {% include "partials/results.html" %}
+</div>
+{% endblock %}

@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block title %}{{ game.title }} — Metacrawl{% endblock %}
+{% block content %}
+<a href="/" class="back-link">← All games</a>
+
+<div class="game-detail">
+  <div class="detail-header">
+    {% if game.cover_url %}
+    <img src="{{ game.cover_url }}" alt="{{ game.title }}" class="detail-cover">
+    {% else %}
+    <div class="detail-cover detail-cover-placeholder"></div>
+    {% endif %}
+    <div class="detail-info">
+      <h1>{{ game.title }}</h1>
+      <div class="detail-meta">
+        {% if game.developer %}<span>{{ game.developer }}</span>{% endif %}
+        {% if game.publisher and game.publisher != game.developer %}
+        <span class="meta-sep">·</span><span>{{ game.publisher }}</span>
+        {% endif %}
+        {% if game.release_date %}
+        <span class="meta-sep">·</span><span>{{ game.release_date }}</span>
+        {% endif %}
+        {% if game.rating %}
+        <span class="rating-badge">{{ game.rating }}</span>
+        {% endif %}
+      </div>
+      {% if genres %}
+      <div class="genres">
+        {% for g in genres %}
+        <span class="genre-chip">{{ g }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% if game.description %}
+      <p class="detail-desc">{{ game.description }}</p>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if platform_scores %}
+  <section class="detail-section">
+    <h2>Scores by Platform</h2>
+    <table class="scores-table">
+      <thead>
+        <tr>
+          <th>Platform</th>
+          <th>Metascore</th>
+          <th>User Score</th>
+          <th>Critic Reviews</th>
+          <th>User Reviews</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ps in platform_scores %}
+        <tr>
+          <td>{{ ps.platform }}</td>
+          <td>
+            {% if ps.metascore %}
+            <span class="score score-{% if ps.metascore >= 61 %}great{% elif ps.metascore >= 40 %}mixed{% else %}bad{% endif %}">
+              {{ ps.metascore }}
+            </span>
+            {% else %}—{% endif %}
+          </td>
+          <td>{{ "%.1f"|format(ps.userscore) if ps.userscore else "—" }}</td>
+          <td>{{ ps.critic_reviews or 0 }}</td>
+          <td>{{ ps.user_reviews or 0 }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+
+  {% if summaries %}
+  <section class="detail-section">
+    <h2>AI Summaries</h2>
+    {% for kind in ["critic", "user"] %}
+    {% if kind in summaries %}
+    {% set s = summaries[kind] %}
+    <div class="summary-card">
+      <h3>{{ kind|capitalize }} Reviews</h3>
+      <div class="summary-body">
+        <div class="summary-likes"><strong>Liked:</strong> {{ s.likes }}</div>
+        <div class="summary-dislikes"><strong>Criticised:</strong> {{ s.dislikes }}</div>
+      </div>
+      <p class="summary-meta">
+        Based on {{ s.source_review_count }} reviews
+        · {{ s.model }}
+        {% if s.generated_at %}· {{ s.generated_at.strftime("%Y-%m-%d") }}{% endif %}
+      </p>
+    </div>
+    {% endif %}
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {% if critic_reviews %}
+  <section class="detail-section">
+    <h2>Critic Reviews</h2>
+    <div class="reviews-list">
+      {% for r in critic_reviews %}
+      <div class="review-card">
+        <div class="review-header">
+          {% if r.score is not none %}
+          <span class="score score-{% if r.score >= 61 %}great{% elif r.score >= 40 %}mixed{% else %}bad{% endif %} score-sm">
+            {{ r.score }}
+          </span>
+          {% endif %}
+          <strong>{{ r.author or "—" }}</strong>
+          {% if r.publication %}<span class="publication">{{ r.publication }}</span>{% endif %}
+          {% if r.review_date %}<span class="review-date">{{ r.review_date }}</span>{% endif %}
+        </div>
+        {% if r.quote %}
+        <p class="review-quote">{{ r.quote }}</p>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if user_reviews %}
+  <section class="detail-section">
+    <h2>User Reviews</h2>
+    <div class="reviews-list">
+      {% for r in user_reviews %}
+      <div class="review-card">
+        <div class="review-header">
+          {% if r.score is not none %}
+          <span class="score score-{% if r.score >= 61 %}great{% elif r.score >= 40 %}mixed{% else %}bad{% endif %} score-sm">
+            {{ r.score }}
+          </span>
+          {% endif %}
+          <strong>{{ r.author or "Anonymous" }}</strong>
+          {% if r.review_date %}<span class="review-date">{{ r.review_date }}</span>{% endif %}
+          {% if r.thumbs_up %}<span class="thumbs">👍 {{ r.thumbs_up }}</span>{% endif %}
+        </div>
+        {% if r.quote %}
+        <p class="review-quote">{{ r.quote }}</p>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="detail-section similar-section">
+    <h2>Similar Games</h2>
+    <p class="placeholder-text">Similarity embeddings not yet computed (step 7).</p>
+  </section>
+</div>
+{% endblock %}

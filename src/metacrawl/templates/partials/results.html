@@ -1,0 +1,57 @@
+<p class="results-count">
+  {{ total }} game{% if total != 1 %}s{% endif %}
+  {%- if q %} matching "{{ q }}"{% endif %}
+  {%- if platform %} on {{ platform }}{% endif %}
+</p>
+
+<div class="game-grid">
+{% for game in games %}
+<a href="/games/{{ game.slug }}" class="game-card">
+  {% if game.cover_url %}
+  <img src="{{ game.cover_url }}" alt="{{ game.title }}" class="game-cover" loading="lazy">
+  {% else %}
+  <div class="game-cover game-cover-placeholder"></div>
+  {% endif %}
+  <div class="game-info">
+    <div class="game-title">{{ game.title }}</div>
+    <div class="game-meta">
+      {% if game.metascore %}
+      <span class="score score-{% if game.metascore >= 61 %}great{% elif game.metascore >= 40 %}mixed{% else %}bad{% endif %}">
+        {{ game.metascore }}
+      </span>
+      {% else %}
+      <span class="score score-na">—</span>
+      {% endif %}
+      {% if game.release_date %}
+      <span class="release-date">{{ game.release_date }}</span>
+      {% endif %}
+    </div>
+    <div class="platforms">
+      {% for p in game_platforms.get(game.id, []) %}
+      <span class="platform-chip">{{ p }}</span>
+      {% endfor %}
+    </div>
+  </div>
+</a>
+{% else %}
+<p class="no-results">No games found.</p>
+{% endfor %}
+</div>
+
+{% if pages > 1 %}
+<nav class="pagination">
+  {% if page > 1 %}
+  <a href="/?q={{ q }}&platform={{ platform }}&sort={{ sort }}&page={{ page - 1 }}"
+     hx-get="/?q={{ q }}&platform={{ platform }}&sort={{ sort }}&page={{ page - 1 }}"
+     hx-target="#results" hx-push-url="true"
+     class="page-btn">← Prev</a>
+  {% endif %}
+  <span class="page-info">Page {{ page }} / {{ pages }}</span>
+  {% if page < pages %}
+  <a href="/?q={{ q }}&platform={{ platform }}&sort={{ sort }}&page={{ page + 1 }}"
+     hx-get="/?q={{ q }}&platform={{ platform }}&sort={{ sort }}&page={{ page + 1 }}"
+     hx-target="#results" hx-push-url="true"
+     class="page-btn">Next →</a>
+  {% endif %}
+</nav>
+{% endif %}
