@@ -1,7 +1,12 @@
 # Metacrawl
 
-A Metacritic games service that crawls game listings, critic and user reviews,
-generates AI summaries, and serves a browsable web UI.
+A Metacritic games service that crawls game listings, fetches critic and user
+reviews, generates AI-written summaries per review kind, and serves a
+browsable web UI with search, filtering, and text-similarity recommendations.
+
+## Live demo
+
+<!-- LIVE_URL -->
 
 ## Architecture
 
@@ -22,13 +27,31 @@ Crawler (background thread via CrawlWorker)
 
 Storage: SQLite  (6 tables: games, platform_scores, game_genres,
                   reviews, summaries, embeddings, crawl_runs)
-Seed:    seeds/seed.json — 172 games, 267 summaries pre-loaded at boot
+Seed:    seeds/seed.json — 172 games, 268 summaries pre-loaded at boot
 ```
 
 **LLM summary contract:** the model returns `{"likes": "...", "dislikes": "..."}`.
 Either field may be JSON `null` when a side genuinely has nothing — e.g. a game
 with only uniformly negative reviews gets `likes: null`, and the card shows
 "No positives mentioned across N reviews" instead of a blank heading.
+
+## What was measured
+
+The seed was built locally with Ollama and ships with the repo because the
+free host has no persistent disk — every restart reseeds from `seeds/seed.json`.
+
+| Metric | Value |
+|--------|-------|
+| Games in shipped seed | 172 |
+| Games with both critic and user summary | 100 |
+| Games with one summary | 67 |
+| Reviews stored | 2,712 |
+| Embeddings in seed | 171 |
+| Embeddings in full local database | 512 |
+| Tests passing | 160 |
+
+Summaries generated locally with **qwen2.5:7b** via Ollama; embeddings with
+**nomic-embed-text**.
 
 ## Robots.txt position
 
@@ -91,15 +114,27 @@ PYTHONPATH=src python -m pytest tests/
 
 ## What does not work yet
 
+- **Embeddings disabled in production** — Groq serves chat completions only,
+  so `MC_EMBED_PROVIDER` is left empty in `render.yaml`.  Games added by the
+  hourly crawl fall back to metadata-overlap similarity (weighted Jaccard:
+  genres 60 %, platforms 40 %).  The UI labels each result with the method
+  used ("embedding" or "metadata overlap") so the degradation is visible.
+
+- **Ephemeral database on the free host** — Render's free plan has no
+  persistent disk.  Every restart restores the committed seed, so crawl
+  results added after deploy do not survive a restart.  The seed is rebuilt
+  locally and recommitted to update production data.
+
 - **`mafia-the-old-country-man-of-honor` user summary** — local Ollama returns
   HTTP 500 when generating the user summary for this game.  The failure is not
   reproducible by sending the same prompt directly to Ollama; root cause
-  unidentified.  The game has a critic summary and no user summary.  The error
-  is recorded as an `llm_error` in the crawl run.
+  unidentified.  The critic summary is present; the user summary is absent and
+  recorded as an `llm_error`.
 
-- **Embeddings on Render free tier** — `MC_EMBED_PROVIDER` is set to empty in
-  `render.yaml`, so similarity falls back to genre/platform overlap.  Set
-  `MC_EMBED_PROVIDER=openai-compatible` and point it at an embeddings endpoint
-  to enable text-similarity.
+- **Hourly crawl uses an external scheduler** — Render free instances spin down
+  after 15 minutes of inactivity, so an in-process APScheduler job cannot
+  fire.  Instead, `MC_SCHEDULER_ENABLED=false` disables APScheduler and an
+  external cron service (e.g. cron-job.org) sends a signed `POST /api/crawl/run`
+  request each hour.  This wakes the instance and triggers the crawl.
 
 - **Video playback** — `video_url` is stored but no player is rendered in the UI.
