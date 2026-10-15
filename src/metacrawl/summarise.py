@@ -71,8 +71,19 @@ def _sample_user(reviews: list[Review], n: int) -> tuple[list[Review], str]:
     return picked, _RULE_USER.format(n=len(picked))
 
 
+_MIN_SUMMARY_LEN = 20
+
+
 def _parse_llm_response(text: str) -> dict | None:
-    """Return {"likes": str, "dislikes": str} or None if unparseable/invalid."""
+    """
+    Return {"likes": str, "dislikes": str} or None if the response is
+    unparseable or invalid.
+
+    Rejects responses where either field is empty, whitespace-only, or
+    shorter than _MIN_SUMMARY_LEN characters after stripping.  A half-summary
+    (e.g. {"likes": "", "dislikes": "..."}) must never reach the database —
+    it would be worse than no summary at all.
+    """
     try:
         d = json.loads(text)
     except (json.JSONDecodeError, ValueError):
@@ -81,8 +92,8 @@ def _parse_llm_response(text: str) -> dict | None:
         isinstance(d, dict)
         and isinstance(d.get("likes"), str)
         and isinstance(d.get("dislikes"), str)
-        and d["likes"].strip()
-        and d["dislikes"].strip()
+        and len(d["likes"].strip()) >= _MIN_SUMMARY_LEN
+        and len(d["dislikes"].strip()) >= _MIN_SUMMARY_LEN
     ):
         return {"likes": d["likes"], "dislikes": d["dislikes"]}
     return None

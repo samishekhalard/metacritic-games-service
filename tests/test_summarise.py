@@ -25,8 +25,8 @@ from metacrawl.summarise import (
 # ── Fake LLM callables ────────────────────────────────────────────────────────
 
 def _good_llm(messages):
-    """Always returns a well-formed JSON summary."""
-    return json.dumps({"likes": "Great gameplay.", "dislikes": "Short campaign."})
+    """Always returns a well-formed JSON summary (both fields ≥ 20 chars)."""
+    return json.dumps({"likes": "The gameplay is excellent.", "dislikes": "The campaign is too short."})
 
 
 def _malformed_llm(messages):
@@ -79,8 +79,10 @@ def _add_reviews(session, game, kind="critic", n=5, base_score=80):
 # ── _parse_llm_response ───────────────────────────────────────────────────────
 
 def test_parse_valid_response():
-    result = _parse_llm_response('{"likes": "fun", "dislikes": "short"}')
-    assert result == {"likes": "fun", "dislikes": "short"}
+    result = _parse_llm_response(
+        '{"likes": "Excellent mechanics and visuals.", "dislikes": "Repetitive mission design."}'
+    )
+    assert result == {"likes": "Excellent mechanics and visuals.", "dislikes": "Repetitive mission design."}
 
 
 def test_parse_invalid_json_returns_none():
@@ -99,9 +101,16 @@ def test_parse_empty_values_returns_none():
     assert _parse_llm_response('{"likes": "", "dislikes": "short"}') is None
 
 
+def test_parse_too_short_values_returns_none():
+    # Both fields present but under the 20-char minimum — reject as half-summary.
+    assert _parse_llm_response('{"likes": "fun", "dislikes": "short"}') is None
+
+
 def test_parse_extra_keys_ok():
-    # Extra keys are ignored; the required ones are present.
-    result = _parse_llm_response('{"likes": "a", "dislikes": "b", "score": 9}')
+    # Extra keys are ignored; required fields are long enough.
+    result = _parse_llm_response(
+        '{"likes": "Excellent mechanics overall.", "dislikes": "Repetitive missions.", "score": 9}'
+    )
     assert result is not None
 
 
@@ -293,8 +302,8 @@ def test_summary_stores_likes_and_dislikes(db):
 
     with Session() as s:
         summ = s.query(Summary).filter_by(game_id=game_id, kind="critic").one()
-    assert summ.likes == "Great gameplay."
-    assert summ.dislikes == "Short campaign."
+    assert summ.likes == "The gameplay is excellent."
+    assert summ.dislikes == "The campaign is too short."
 
 
 # ── generate_summaries — failure paths ───────────────────────────────────────
@@ -334,6 +343,57 @@ def test_llm_none_creates_no_summary(db):
         s.commit()
         game_id = game.id
 
+    with Session() as s:
+        assert s.query(Summary).filter_by(game_id=game_id).count() == 0
+
+
+# ── half-summary rejection ────────────────────────────────────────────────────
+
+def test_half_summary_empty_likes_not_written(db):
+    """
+    A model response with an empty likes field must not reach the DB and
+    must be counted as an LLM error, not silently skipped.
+    {"likes": "", "dislikes": "..."} is the exact shape that caused a real
+    production truncation (nightmare-frontier run, Oct 2026).
+    """
+    def _half_llm(messages):
+        return json.dumps({
+            "likes": "",
+            "dislikes": "The game has serious performance issues on all PC platforms tested.",
+        })
+
+    Session, _ = db
+    with Session() as s:
+        game = _make_game(s, external_id=20)
+        _add_reviews(s, game, kind="critic", n=3)
+        c, u, errors = generate_summaries(s, game, _half_llm)
+        s.commit()
+        game_id = game.id
+
+    assert c is False
+    assert errors == 1
+    with Session() as s:
+        assert s.query(Summary).filter_by(game_id=game_id).count() == 0
+
+
+def test_half_summary_short_field_not_written(db):
+    """A response where one field is present but too short (< 20 chars) is also rejected."""
+    def _short_llm(messages):
+        return json.dumps({
+            "likes": "OK.",
+            "dislikes": "The game has serious performance issues on all PC platforms tested.",
+        })
+
+    Session, _ = db
+    with Session() as s:
+        game = _make_game(s, external_id=21)
+        _add_reviews(s, game, kind="critic", n=3)
+        c, u, errors = generate_summaries(s, game, _short_llm)
+        s.commit()
+        game_id = game.id
+
+    assert c is False
+    assert errors == 1
     with Session() as s:
         assert s.query(Summary).filter_by(game_id=game_id).count() == 0
 

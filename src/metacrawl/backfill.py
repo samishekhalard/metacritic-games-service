@@ -72,8 +72,9 @@ def _priority_query(session, only_missing_summaries: bool):
     Priority 1 (later): anything else.
     Within each priority tier: metascore DESC NULLS LAST, then by id.
 
-    With only_missing_summaries=True the query is pre-filtered to games
-    that have reviews of a kind but no summary for that kind.
+    Both modes pre-filter to games that actually need work, so the limit
+    is consumed only by games with genuine gaps (no wasted API calls on
+    already-complete entries).
     """
     priority = case(
         (and_(Game.metascore.isnot(None), Game.description.isnot(None)), 0),
@@ -84,16 +85,26 @@ def _priority_query(session, only_missing_summaries: bool):
         .order_by(priority, Game.metascore.desc().nullslast(), Game.id)
     )
 
+    has_critic_rev = session.query(Review.game_id).filter(Review.kind == "critic")
+    has_user_rev   = session.query(Review.game_id).filter(Review.kind == "user")
+    has_critic_sum = session.query(Summary.game_id).filter(Summary.kind == "critic")
+    has_user_sum   = session.query(Summary.game_id).filter(Summary.kind == "user")
+
     if only_missing_summaries:
-        needs_critic = and_(
-            Game.id.in_(session.query(Review.game_id).filter(Review.kind == "critic")),
-            ~Game.id.in_(session.query(Summary.game_id).filter(Summary.kind == "critic")),
-        )
-        needs_user = and_(
-            Game.id.in_(session.query(Review.game_id).filter(Review.kind == "user")),
-            ~Game.id.in_(session.query(Summary.game_id).filter(Summary.kind == "user")),
-        )
+        # Games with reviews of a kind but no summary for that kind.
+        needs_critic = and_(Game.id.in_(has_critic_rev), ~Game.id.in_(has_critic_sum))
+        needs_user   = and_(Game.id.in_(has_user_rev),   ~Game.id.in_(has_user_sum))
         query = query.filter(needs_critic | needs_user)
+    else:
+        # Full backfill: only games that have actual gaps.
+        # A game is complete when it has a description AND summaries exist for
+        # every review kind that has reviews.  Exclude those; include everything else.
+        needs_work = (
+            Game.description.is_(None)                                       # detail not fetched
+            | (Game.id.in_(has_critic_rev) & ~Game.id.in_(has_critic_sum))   # critic summary missing
+            | (Game.id.in_(has_user_rev)   & ~Game.id.in_(has_user_sum))     # user summary missing
+        )
+        query = query.filter(needs_work)
 
     return query
 
