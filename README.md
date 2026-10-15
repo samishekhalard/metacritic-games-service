@@ -1,3 +1,14 @@
+---
+title: Metacritic Games Service
+emoji: 🎮
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 8000
+pinned: false
+license: mit
+---
+
 # Metacrawl
 
 A Metacritic games service that crawls game listings, fetches critic and user
