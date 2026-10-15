@@ -58,3 +58,29 @@ def fetch_browse_url(client: HttpClient, url: str) -> tuple[list[GameSummary], s
         data.get("links", {}).get("next", {}) or {}
     ).get("href")
     return _summaries(data), next_href
+
+
+def fetch_scored_page(
+    client: HttpClient,
+    offset: int = 0,
+    limit: int = 20,
+) -> tuple[list[GameSummary], str | None]:
+    """
+    One page of games that have a Metascore (metaScoreMin=1), sorted by release
+    date descending.  Returns (games, next_url) where next_url is the
+    links.next.href cursor for the following page.
+
+    This is the paginated form of the New Releases carousel query from
+    BRIEF.md §1.1.  The carousel only exposes 20 items; this function lets
+    callers walk the full scored catalogue page-by-page.
+    """
+    data = client.get_json(_FINDER, {
+        **_BASE_PARAMS,
+        "metaScoreMin": "1",
+        "offset": str(offset),
+        "limit": str(limit),
+    })
+    next_href: str | None = (
+        data.get("links", {}).get("next", {}) or {}
+    ).get("href")
+    return _summaries(data), next_href

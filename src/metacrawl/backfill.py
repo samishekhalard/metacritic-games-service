@@ -54,7 +54,8 @@ class GameResult:
     critic_written: bool = False
     user_written: bool = False
     llm_errors: int = 0
-    skipped_no_reviews: bool = False
+    skipped_no_reviews: bool = False   # unreleased: metascore IS NULL, expected
+    scored_no_reviews: bool = False    # has metascore but MC returned 0 reviews
     already_complete: bool = False
     error: Optional[str] = None
 
@@ -129,6 +130,8 @@ def _process_game(
     user_n: int = session.query(Review).filter_by(game_id=game.id, kind="user").count()
 
     if critic_n == 0 and user_n == 0:
+        if game.metascore is not None:
+            return GameResult(slug=slug, scored_no_reviews=True)
         return GameResult(slug=slug, skipped_no_reviews=True)
 
     existing_kinds = set(
@@ -164,8 +167,10 @@ def _print_result(idx: int, total: int, r: GameResult) -> None:
     prefix = f"[{idx:4d}/{total}] {r.slug:<45}"
     if r.error:
         print(f"{prefix} ERROR: {r.error}", flush=True)
+    elif r.scored_no_reviews:
+        print(f"{prefix} scored but no reviews (metascore present, MC returned 0)", flush=True)
     elif r.skipped_no_reviews:
-        print(f"{prefix} skipped (no reviews)", flush=True)
+        print(f"{prefix} skipped (unreleased, no reviews)", flush=True)
     elif r.already_complete:
         print(f"{prefix} {r.critic_reviews}c+{r.user_reviews}u  already complete", flush=True)
     else:
@@ -217,11 +222,14 @@ def run_backfill(
     new_summaries = sum(r.critic_written + r.user_written for r in results)
     complete = sum(r.already_complete for r in results)
     skipped = sum(r.skipped_no_reviews for r in results)
+    scored_no_rev = sum(r.scored_no_reviews for r in results)
     errors = sum(r.error is not None for r in results)
+    games_with_new = sum(r.critic_written or r.user_written for r in results)
     print(
-        f"\nDone: {new_summaries} new summaries, "
+        f"\nDone: {new_summaries} new summaries on {games_with_new} games, "
         f"{complete} already complete, "
-        f"{skipped} skipped (no reviews), "
+        f"{skipped} skipped (unreleased), "
+        f"{scored_no_rev} scored-but-no-reviews, "
         f"{errors} errors",
         flush=True,
     )

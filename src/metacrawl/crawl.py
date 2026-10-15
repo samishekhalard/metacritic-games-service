@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from sqlalchemy import text
 
 from .api.detail import fetch_critic_reviews, fetch_detail, fetch_user_reviews
-from .api.finder import fetch_browse_page, fetch_browse_url, fetch_new_releases
+from .api.finder import fetch_browse_page, fetch_browse_url, fetch_new_releases, fetch_scored_page
 from .db.models import CrawlRun, Game
 from .db.session import init_db, make_engine, make_session_factory
 from .db.upsert import apply_detail, upsert_game
@@ -182,12 +182,97 @@ def do_crawl(
     return run
 
 
+# ── Scored-only listing crawl ─────────────────────────────────────────────────
+
+def crawl_scored(session_factory, pages: int) -> dict:
+    """
+    Fetch `pages` pages of scored games (metaScoreMin=1) and upsert their
+    listing data.  Does NOT fetch detail pages, reviews, or summaries — that
+    is left to `python -m metacrawl.backfill`.
+
+    Returns a summary dict: {created, updated, errors, pages_fetched}.
+    """
+    created = updated = errors = 0
+    pages_fetched = 0
+    next_url: str | None = None
+
+    with HttpClient() as client:
+        for page_num in range(1, pages + 1):
+            if page_num == 1:
+                summaries, next_url = fetch_scored_page(client, offset=0, limit=20)
+            else:
+                if next_url is None:
+                    log.info("scored crawl: no more pages after %d", page_num - 1)
+                    break
+                summaries, next_url = fetch_browse_url(client, next_url)
+
+            pages_fetched += 1
+            batch_new = batch_upd = 0
+
+            with session_factory() as session:
+                for summary in summaries:
+                    try:
+                        _, is_new = upsert_game(session, summary)
+                        if is_new:
+                            batch_new += 1
+                        else:
+                            batch_upd += 1
+                    except Exception:
+                        log.exception("upsert failed for %s", summary.slug)
+                        errors += 1
+                session.commit()
+
+            created += batch_new
+            updated += batch_upd
+            print(
+                f"  page {page_num}/{pages}: {len(summaries)} games,"
+                f" {batch_new} new, {batch_upd} updated",
+                flush=True,
+            )
+
+            if next_url is None:
+                break
+
+    return {"created": created, "updated": updated, "errors": errors, "pages_fetched": pages_fetched}
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Metacrawl crawler")
+    parser.add_argument(
+        "--source",
+        choices=["auto", "scored"],
+        default="auto",
+        help=(
+            "auto = normal hourly logic (new-releases or browse); "
+            "scored = fetch only games with a Metascore, listing-only upsert"
+        ),
+    )
+    parser.add_argument(
+        "--pages",
+        type=int,
+        default=6,
+        help="Number of pages to fetch when --source scored (default 6, 20 games each)",
+    )
+    args = parser.parse_args()
+
     engine = make_engine()
     init_db(engine)
     Session = make_session_factory(engine)
+
+    if args.source == "scored":
+        print(f"Scored crawl: fetching up to {args.pages} pages of scored games…", flush=True)
+        result = crawl_scored(Session, args.pages)
+        print(
+            f"\nDone: {result['created']} new, {result['updated']} updated,"
+            f" {result['errors']} errors ({result['pages_fetched']} pages fetched).",
+            flush=True,
+        )
+        _print_games(engine)
+        return
 
     run = do_crawl(Session)
 
