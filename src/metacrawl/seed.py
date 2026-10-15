@@ -65,9 +65,15 @@ class _DatetimeEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-def export_seed(engine, path: Path) -> dict:
+def export_seed(engine, path: Path, processed_only: bool = False) -> dict:
     """
-    Dump every row from every tracked table to JSON and write to `path`.
+    Dump tracked tables to JSON and write to `path`.
+
+    processed_only — when True, include only games that have at least one
+    summary row, plus up to 5 null-score unreleased games as deliberate
+    evidence that no-review games are handled correctly.  All child rows
+    (platform_scores, reviews, embeddings, etc.) are filtered to match the
+    selected game IDs.  Reduces the seed file size significantly.
 
     Returns a stats dict suitable for printing.
     """
@@ -76,15 +82,51 @@ def export_seed(engine, path: Path) -> dict:
     stats: dict = {}
 
     with engine.connect() as conn:
+        if processed_only:
+            game_ids = _select_processed_ids(conn)
+        else:
+            game_ids = None  # export all
+
         for table in _TABLES:
-            result = conn.execute(text(f"SELECT * FROM {table}"))
-            rows = [dict(r._mapping) for r in result]
+            rows = _fetch_table(conn, table, game_ids)
             data[table] = rows
             stats[table] = len(rows)
 
     path.write_text(json.dumps(data, indent=2, cls=_DatetimeEncoder), encoding="utf-8")
     log.info("seed exported to %s (%s)", path, stats)
     return stats
+
+
+def _select_processed_ids(conn) -> list:
+    """Return game IDs for processed_only export: games with summaries + 5 unreleased."""
+    result = conn.execute(text("SELECT DISTINCT game_id FROM summaries"))
+    processed = [row[0] for row in result]
+    processed_set = set(processed)
+
+    result = conn.execute(text(
+        "SELECT id FROM games WHERE metascore IS NULL LIMIT 10"
+    ))
+    unreleased = [row[0] for row in result if row[0] not in processed_set][:5]
+
+    return processed + unreleased
+
+
+def _fetch_table(conn, table: str, game_ids) -> list:
+    """Fetch all rows from a table, optionally filtered to the given game_ids."""
+    if game_ids is None:
+        result = conn.execute(text(f"SELECT * FROM {table}"))
+        return [dict(r._mapping) for r in result]
+
+    if table == "games":
+        id_list = ",".join(str(i) for i in game_ids)
+        result = conn.execute(text(f"SELECT * FROM games WHERE id IN ({id_list})"))
+    elif table in ("platform_scores", "game_genres", "reviews", "summaries", "embeddings"):
+        id_list = ",".join(str(i) for i in game_ids)
+        result = conn.execute(text(f"SELECT * FROM {table} WHERE game_id IN ({id_list})"))
+    else:
+        result = conn.execute(text(f"SELECT * FROM {table}"))
+
+    return [dict(r._mapping) for r in result]
 
 
 # ── Import / restore ──────────────────────────────────────────────────────────
@@ -144,6 +186,15 @@ def _cli():
 
     exp = sub.add_parser("export", help="Dump local DB to seed file")
     exp.add_argument("--output", type=Path, default=DEFAULT_SEED_PATH)
+    exp.add_argument(
+        "--processed-only",
+        action="store_true",
+        help=(
+            "Only export games that have at least one summary, plus up to 5 "
+            "unreleased (null-score) games as evidence.  Produces a much smaller "
+            "seed file."
+        ),
+    )
 
     imp = sub.add_parser("import", help="Restore seed into (empty) DB")
     imp.add_argument("--input", type=Path, default=DEFAULT_SEED_PATH)
@@ -157,7 +208,7 @@ def _cli():
     init_db(engine)
 
     if args.cmd == "export":
-        stats = export_seed(engine, args.output)
+        stats = export_seed(engine, args.output, processed_only=args.processed_only)
         for table, n in stats.items():
             print(f"  {table}: {n} rows")
         print(f"Seed written to {args.output}")

@@ -221,17 +221,9 @@ def _ping(base_url: str, api_key: str, timeout: float = 3.0) -> bool:
         return False
 
 
-@router.get("/health")
-def health(request: Request):
-    """
-    One-shot status page: DB counts, LLM/embedder reachability, last crawl.
-
-    Returns HTTP 200 when everything is functional.
-    Returns HTTP 503 when the LLM is unreachable (embedder degraded is OK).
-    """
+def _health_payload(request: Request) -> dict:
     Session = request.app.state.session_factory
 
-    # ── DB counts ─────────────────────────────────────────────────────────
     with Session() as session:
         game_count    = session.query(Game).count()
         summary_count = session.query(Summary).count()
@@ -249,14 +241,11 @@ def health(request: Request):
             .first()
         )
 
-    # ── Provider checks (run in parallel via threads would be nice, but
-    #    sequential is fine for a health endpoint — total budget ~6 s) ────
     llm_reachable = _ping(settings.llm_base_url, settings.llm_api_key)
-
     embed_cfg = embedder_enabled()
     embed_reachable = _ping(settings.llm_base_url, settings.llm_api_key) if embed_cfg else None
 
-    payload = {
+    return {
         "db": {
             "ok": True,
             "games": game_count,
@@ -298,5 +287,16 @@ def health(request: Request):
         "crawl_worker_running": request.app.state.worker.is_running,
     }
 
-    status_code = 200 if llm_reachable else 503
+
+@router.get("/health")
+def health(request: Request):
+    """Liveness check — always HTTP 200 when the app is serving."""
+    return JSONResponse(content=_health_payload(request), status_code=200)
+
+
+@router.get("/health/ready")
+def health_ready(request: Request):
+    """Readiness check — HTTP 503 when the LLM provider is unreachable."""
+    payload = _health_payload(request)
+    status_code = 200 if payload["llm"]["reachable"] else 503
     return JSONResponse(content=payload, status_code=status_code)

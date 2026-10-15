@@ -103,6 +103,8 @@ def generate_summaries(
     session: Session,
     game: Game,
     llm: LLMCallable,
+    *,
+    skip_existing: bool = False,
 ) -> tuple:
     """
     Generate and persist critic + user summaries for a game.
@@ -114,22 +116,38 @@ def generate_summaries(
                    summarise (that is a skip, not an error).
                    The crawl loop stores this in CrawlRun.llm_errors so
                    failures are visible in /health and the monitor.
+      skip_existing — when True, do not re-generate summaries that are already
+                      present.  Used by the backfill command to avoid wasting
+                      LLM calls on games that were successfully summarised
+                      during a previous crawl.
     """
+    from sqlalchemy import select as _select
+
     all_reviews: list[Review] = (
         session.query(Review).filter_by(game_id=game.id).all()
     )
+
+    existing_kinds: set = set()
+    if skip_existing:
+        existing_kinds = set(
+            session.execute(
+                _select(Summary.kind).where(Summary.game_id == game.id)
+            ).scalars().all()
+        )
 
     critic_written, c_failed = _summarise_kind(
         session, game, all_reviews,
         kind="critic",
         sampler=lambda r: _sample_critic(r, settings.llm_max_reviews),
         llm=llm,
+        already_exists="critic" in existing_kinds,
     )
     user_written, u_failed = _summarise_kind(
         session, game, all_reviews,
         kind="user",
         sampler=lambda r: _sample_user(r, settings.llm_max_reviews),
         llm=llm,
+        already_exists="user" in existing_kinds,
     )
     return critic_written, user_written, int(c_failed) + int(u_failed)
 
@@ -142,8 +160,12 @@ def _summarise_kind(
     kind: str,
     sampler: Callable,
     llm: LLMCallable,
+    already_exists: bool = False,
 ) -> tuple:
     """Returns (written: bool, failed: bool)."""
+    if already_exists:
+        log.debug("skip %s summary for %s — already exists", kind, game.slug)
+        return False, False
     picked, rule = sampler(all_reviews)
     if not picked:
         log.debug("skip %s summary for %s — no %s reviews with quotes", kind, game.slug, kind)
