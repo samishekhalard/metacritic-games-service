@@ -6,7 +6,7 @@ Covers 5 games from the seed:
   enshrouded                          — critic-only summary
   niph                                — unreleased (no metascore)
   warhammer-40000-boltgun-2           — has a video link
-  bio-inc-classic                     — no cover (proxy returns SVG placeholder)
+  everspace-2-galactic-edition        — no cover (proxy returns SVG placeholder)
 
 Each failure names the game and URL involved.
 """
@@ -64,14 +64,14 @@ _GAMES = {
         "has_video":   True,
         "has_cover":   True,
     },
-    "bio-inc-classic": {
-        "title":       "Bio Inc. Classic",
-        "developer":   "DryGin Studios",
+    "everspace-2-galactic-edition": {
+        "title":       "EVERSPACE 2: Galactic Edition",
+        "developer":   "ROCKFISH Games",
         "has_desc":    True,
         "has_date":    True,
-        "platforms":   set(),
-        "summaries":   set(),
-        "has_video":   False,
+        "platforms":   set(),      # scores present but may vary
+        "summaries":   {"critic", "user"},
+        "has_video":   True,
         "has_cover":   False,      # no cover_url in DB → proxy serves SVG placeholder
     },
 }
@@ -382,11 +382,11 @@ def test_detail_similar_games(page, base_url, slug):
 
 def test_detail_no_cover_shows_placeholder_img(page, base_url):
     """
-    bio-inc-classic has no cover_url in the DB.
+    everspace-2-galactic-edition has no cover_url in the DB.
     The proxy must serve an SVG placeholder — the page should still have an
     <img class='detail-cover'> that loads (naturalWidth > 0), not a broken img.
     """
-    slug = "bio-inc-classic"
+    slug = "everspace-2-galactic-edition"
     url = _open_detail(page, base_url, slug)
 
     cover_img = page.locator("img.detail-cover")
