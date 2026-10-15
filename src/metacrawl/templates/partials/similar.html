@@ -9,11 +9,7 @@
 {% for r in similar %}
 <li class="similar-item {% if r.is_weak %}similar-weak{% endif %}">
   <a href="/games/{{ r.game.slug }}" class="similar-link">
-    {% if r.game.cover_url %}
-    <img src="{{ r.game.cover_url }}" alt="{{ r.game.title }}" class="similar-cover" loading="lazy">
-    {% else %}
-    <div class="similar-cover similar-cover-placeholder"></div>
-    {% endif %}
+    <img src="/img/{{ r.game.id }}" alt="{{ r.game.title }}" class="similar-cover" loading="lazy">
     <div class="similar-info">
       <div class="similar-title">{{ r.game.title }}</div>
       <div class="similar-platforms">

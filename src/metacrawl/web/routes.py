@@ -10,12 +10,13 @@ from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 
 from ..config import settings
 from ..db.models import CrawlRun, Embedding, Game, PlatformScore, Review, Summary, game_genres
+from ..img_proxy import placeholder_svg, serve_cover
 from ..embed import embedder_enabled
 from ..similar import find_similar
 
@@ -101,7 +102,7 @@ def games_list(
 
         sort_expr = {
             "score": Game.metascore.desc().nullslast(),
-            "title": Game.title.asc(),
+            "title": Game.title.collate("NOCASE").asc(),
             "date": Game.release_date.desc().nullslast(),
         }.get(sort, Game.metascore.desc().nullslast())
         query = query.order_by(sort_expr)
@@ -261,6 +262,37 @@ def crawl_status(request: Request):
         f'<span id="crawl-badge" class="badge {cls}"'
         f' hx-get="/api/crawl/status" hx-trigger="{trigger}" hx-swap="outerHTML"'
         f' hx-target="#crawl-badge">{label}</span>'
+    )
+
+
+# ── Image proxy ───────────────────────────────────────────────────────────────
+
+@router.get("/img/{game_id}")
+def game_image(request: Request, game_id: int):
+    """
+    Proxy a game cover image.  Always returns HTTP 200.
+
+    On cache hit: returns cached bytes with Cache-Control: public, max-age=86400.
+    On upstream fetch: fetches with browser headers (the Metacritic CDN requires
+    Accept: image/* and Referer), caches, returns.
+    On any failure or missing cover_url: returns a generated SVG placeholder.
+    """
+    Session = request.app.state.session_factory
+    with Session() as session:
+        game = session.query(Game).filter_by(id=game_id).first()
+
+    if game is None:
+        return Response(
+            content=placeholder_svg("?"),
+            media_type="image/svg+xml",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+
+    data, ct = serve_cover(game.id, game.cover_url, game.title)
+    return Response(
+        content=data,
+        media_type=ct,
+        headers={"Cache-Control": "public, max-age=86400"},
     )
 
 

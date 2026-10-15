@@ -165,3 +165,19 @@ def test_browse_cover_url_is_hashed_cdn_url(browse_html):
         r"https://www\.metacritic\.com/a/img/resize/[a-f0-9]{40}/catalog/",
         games[0].image_url,
     ), f"expected hashed CDN URL, got: {games[0].image_url}"
+
+
+def test_browse_cover_url_includes_query_params(browse_html):
+    """
+    The extracted URL must include ?auto=webp query params.
+    Without them the CDN returns 403 — the hash is computed per-size and the
+    query string must be present for the CDN to accept the request.
+    """
+    games = parse_listing(browse_html)
+    url = games[0].image_url
+    assert url is not None
+    assert "?auto=webp" in url, (
+        f"CDN URL is missing required query params (?auto=webp…), got: {url}\n"
+        "Root cause: _CDN_IMG regex must not stop at '?' — it must capture the "
+        "full query string."
+    )

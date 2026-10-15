@@ -118,7 +118,8 @@ def parse(html: str) -> dict:
 
 
 _CDN_IMG = re.compile(
-    r"(https://www\.metacritic\.com/a/img/resize/[a-f0-9]{40}/catalog(/[^\"'?<>\s,]+))"
+    r"(https://www\.metacritic\.com/a/img/resize/[a-f0-9]{40}/catalog(/[^\"'?<>\s,]+)"
+    r"(\?[^\"'<>\s,]+)?)"
 )
 
 
@@ -129,10 +130,16 @@ def scrape_image_urls(html: str) -> dict:
 
     imageUrl in the Nuxt payload is always null; the hash only appears in
     server-rendered markup and embedded JSON metadata.  The regex scans
-    anywhere in the page (img src, og:image JSON, etc.).
+    anywhere in the page (img src, srcset, embedded JSON, etc.).
 
-    Returns e.g. {"/provider/6/12/6-1-824956-52.jpg": "https://…?auto=webp"}
-    First occurrence per bucketPath wins.
+    IMPORTANT: the Metacritic CDN returns 403 for URLs without query params.
+    Each size/density variant has a unique hash that corresponds to specific
+    dimensions (e.g. ?auto=webp&fit=cover&height=144&quality=70&width=96).
+    Group 1 captures the full URL including the query string (HTML-escaped
+    ampersands are unescaped); group 2 is the bucketPath dict key (no query).
+
+    Returns e.g. {"/provider/6/12/6-1-824956-52.jpg": "https://…?auto=webp&fit=cover&…"}
+    First occurrence per bucketPath wins (1x srcset entry beats the 2x).
     """
     result: dict = {}
     for m in _CDN_IMG.finditer(html):

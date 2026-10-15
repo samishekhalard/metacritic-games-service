@@ -210,11 +210,24 @@ def _update_cover(session, game: Game, client: HttpClient) -> bool:
 
 
 _COVER_HASH_RE = re.compile(r"/resize/[a-f0-9]{40}/")
+_COVER_QPARAM_RE = re.compile(r"\?auto=webp")
 
 
 def _needs_cover(cover_url: "str | None") -> bool:
-    """True when cover_url is missing or is the broken composed form (no hash)."""
-    return not cover_url or not _COVER_HASH_RE.search(cover_url)
+    """
+    True when cover_url is missing, has no content hash, or is missing the CDN
+    query parameters (?auto=webp…).
+
+    The Metacritic CDN returns 403 for hashed URLs without query params —
+    the hash encodes specific dimensions that must be reflected in the query
+    string.  A URL that passes the hash check but lacks ?auto=webp will 403
+    in the browser and in the image proxy, so it needs re-fetching too.
+    """
+    if not cover_url:
+        return True
+    if not _COVER_HASH_RE.search(cover_url):
+        return True
+    return not _COVER_QPARAM_RE.search(cover_url)
 
 
 def run_covers_backfill(session_factory, *, limit: Optional[int] = None) -> None:

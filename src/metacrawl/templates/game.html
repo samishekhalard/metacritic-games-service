@@ -5,11 +5,7 @@
 
 <div class="game-detail">
   <div class="detail-header">
-    {% if game.cover_url %}
-    <img src="{{ game.cover_url }}" alt="{{ game.title }}" class="detail-cover">
-    {% else %}
-    <div class="detail-cover detail-cover-placeholder"></div>
-    {% endif %}
+    <img src="/img/{{ game.id }}" alt="{{ game.title }}" class="detail-cover">
     <div class="detail-info">
       <h1>{{ game.title }}</h1>
       <div class="detail-meta">
@@ -33,6 +29,11 @@
       {% endif %}
       {% if game.description %}
       <p class="detail-desc">{{ game.description }}</p>
+      {% endif %}
+      {% if game.video_url %}
+      <a href="{{ game.video_url }}" class="video-link" target="_blank" rel="noopener">
+        ▶ Watch trailer
+      </a>
       {% endif %}
     </div>
   </div>
