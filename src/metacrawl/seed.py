@@ -138,14 +138,21 @@ def restore_if_empty(engine, path: Path = DEFAULT_SEED_PATH) -> bool:
     Returns True if the seed was loaded, False if the DB already had rows or
     no seed file was found.  Never overwrites existing data.
     """
-    if not path.exists():
-        log.info("no seed file at %s — starting with empty database", path)
-        return False
-
     with engine.connect() as conn:
         count = conn.execute(text("SELECT COUNT(*) FROM games")).scalar()
     if count > 0:
         log.info("database already has %d games — skipping seed restore", count)
+        return False
+
+    # DB is empty.  Warn loudly if the seed file is also missing — the site
+    # will serve a blank game list with no explanation otherwise.
+    if not path.exists():
+        log.warning(
+            "SEED MISSING AND DATABASE EMPTY: expected seed file at %s — "
+            "the game list will be empty until a crawl runs.  "
+            "Ensure seeds/seed.json is copied into the image (COPY seeds/ ./seeds/).",
+            path,
+        )
         return False
 
     log.info("restoring seed from %s", path)

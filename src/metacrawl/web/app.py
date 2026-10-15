@@ -12,6 +12,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from ..config import settings
 from ..db.session import init_db, make_engine, make_session_factory
 from ..schedule import make_scheduler
 from ..seed import restore_if_empty
@@ -29,14 +30,16 @@ async def lifespan(app: FastAPI):
     session_factory = make_session_factory(engine)
     worker = CrawlWorker(session_factory)
     scheduler = make_scheduler(worker)
-    scheduler.start()
+    if settings.scheduler_enabled:
+        scheduler.start()
 
     app.state.session_factory = session_factory
     app.state.worker = worker
 
     yield
 
-    scheduler.shutdown(wait=False)
+    if settings.scheduler_enabled:
+        scheduler.shutdown(wait=False)
 
 
 app = FastAPI(title="Metacrawl", lifespan=lifespan)

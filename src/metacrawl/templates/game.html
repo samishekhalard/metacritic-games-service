@@ -80,8 +80,20 @@
     <div class="summary-card">
       <h3>{{ kind|capitalize }} Reviews</h3>
       <div class="summary-body">
-        <div class="summary-likes"><strong>Liked:</strong> {{ s.likes }}</div>
-        <div class="summary-dislikes"><strong>Criticised:</strong> {{ s.dislikes }}</div>
+        <div class="summary-likes">
+          {% if s.likes %}
+          <strong>Liked:</strong> {{ s.likes }}
+          {% else %}
+          <em class="summary-absent">No positives mentioned across {{ s.source_review_count }} {{ kind }} review{{ "s" if s.source_review_count != 1 else "" }}</em>
+          {% endif %}
+        </div>
+        <div class="summary-dislikes">
+          {% if s.dislikes %}
+          <strong>Criticised:</strong> {{ s.dislikes }}
+          {% else %}
+          <em class="summary-absent">No criticisms mentioned across {{ s.source_review_count }} {{ kind }} review{{ "s" if s.source_review_count != 1 else "" }}</em>
+          {% endif %}
+        </div>
       </div>
       <p class="summary-meta">
         Based on {{ s.source_review_count }} reviews

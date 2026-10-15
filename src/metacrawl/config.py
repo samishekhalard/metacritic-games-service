@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     llm_base_url: str = "http://localhost:11434/v1"
     llm_api_key: str = "ollama"
     llm_model: str = "qwen2.5:7b"
-    llm_max_reviews: int = 40     # cap per review kind before sending to LLM
+    llm_max_reviews: int = 25     # cap per review kind before sending to LLM
 
     # ── Embedder provider ─────────────────────────────────────────────────────
     # MC_EMBED_PROVIDER = "" | "ollama" | "openai-compatible"
@@ -39,9 +39,14 @@ class Settings(BaseSettings):
     embed_provider: str = "ollama"
     llm_embed_model: str = "nomic-embed-text"   # nomic-embed-text via Ollama
 
+    # ── Scheduler ────────────────────────────────────────────────────────────
+    # Set MC_SCHEDULER_ENABLED=false on Render; the hourly crawl is driven by
+    # an external cron hitting POST /api/crawl/run instead.
+    scheduler_enabled: bool = True
+
     # ── Shared secret ─────────────────────────────────────────────────────────
-    # POST /api/crawl/run requires X-Crawl-Secret: <value> when this is set.
-    # Empty = no auth (local dev).  Set MC_CRAWL_SECRET on Render.
+    # POST /api/crawl/run requires X-Crawl-Secret: <value>.
+    # Unset (empty) = the endpoint refuses all requests.  Always set on Render.
     crawl_secret: str = ""
 
     model_config = {"env_prefix": "MC_"}

@@ -7,6 +7,7 @@ All tests are offline.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 
 import pytest
@@ -15,6 +16,8 @@ from metacrawl.db.models import Game, Review, Summary
 from metacrawl.db.upsert import upsert_game
 from metacrawl.scrape.listing import GameSummary
 from metacrawl.summarise import (
+    _PROMPT_MAX_REVIEWS,
+    _REVIEW_MAX_CHARS,
     _parse_llm_response,
     _sample_critic,
     _sample_user,
@@ -83,6 +86,29 @@ def test_parse_valid_response():
         '{"likes": "Excellent mechanics and visuals.", "dislikes": "Repetitive mission design."}'
     )
     assert result == {"likes": "Excellent mechanics and visuals.", "dislikes": "Repetitive mission design."}
+
+
+def test_parse_null_likes_is_valid():
+    result = _parse_llm_response(
+        '{"likes": null, "dislikes": "The game has serious performance issues on all platforms."}'
+    )
+    assert result is not None
+    assert result["likes"] is None
+    assert result["dislikes"] == "The game has serious performance issues on all platforms."
+
+
+def test_parse_null_dislikes_is_valid():
+    result = _parse_llm_response(
+        '{"likes": "Superb art direction and fluid combat throughout.", "dislikes": null}'
+    )
+    assert result is not None
+    assert result["likes"] == "Superb art direction and fluid combat throughout."
+    assert result["dislikes"] is None
+
+
+def test_parse_both_null_is_valid():
+    result = _parse_llm_response('{"likes": null, "dislikes": null}')
+    assert result == {"likes": None, "dislikes": None}
 
 
 def test_parse_invalid_json_returns_none():
@@ -398,6 +424,57 @@ def test_half_summary_short_field_not_written(db):
         assert s.query(Summary).filter_by(game_id=game_id).count() == 0
 
 
+# ── null sentinel — uniformly negative / uniformly positive reviews ───────────
+
+def test_null_likes_stored_not_counted_as_error(db):
+    """
+    {"likes": null, "dislikes": "..."} is the correct sentinel for uniformly
+    negative reviews.  The row must be written and errors must stay at zero.
+    """
+    def _null_likes_llm(messages):
+        return json.dumps({
+            "likes": None,
+            "dislikes": "The game has serious balance issues and the combat feels unfair throughout.",
+        })
+
+    Session, _ = db
+    with Session() as s:
+        game = _make_game(s, external_id=22)
+        _add_reviews(s, game, kind="user", n=1)
+        c, u, errors = generate_summaries(s, game, _null_likes_llm)
+        s.commit()
+        game_id = game.id
+
+    assert u is True
+    assert errors == 0
+    with Session() as s:
+        summ = s.query(Summary).filter_by(game_id=game_id, kind="user").one()
+    assert summ.likes is None
+    assert summ.dislikes is not None
+
+
+def test_empty_string_still_rejected_not_null(db):
+    """Empty string is not the null sentinel — it is the truncation shape and must be an error."""
+    def _empty_likes_llm(messages):
+        return json.dumps({
+            "likes": "",
+            "dislikes": "The game has serious balance issues and the combat feels unfair throughout.",
+        })
+
+    Session, _ = db
+    with Session() as s:
+        game = _make_game(s, external_id=23)
+        _add_reviews(s, game, kind="user", n=1)
+        c, u, errors = generate_summaries(s, game, _empty_likes_llm)
+        s.commit()
+        game_id = game.id
+
+    assert u is False
+    assert errors == 1
+    with Session() as s:
+        assert s.query(Summary).filter_by(game_id=game_id).count() == 0
+
+
 # ── generate_summaries — idempotency ─────────────────────────────────────────
 
 def test_re_summarise_replaces_not_duplicates(db):
@@ -450,3 +527,42 @@ def test_source_review_count_capped_at_max(db, monkeypatch):
     with Session() as s:
         summ = s.query(Summary).filter_by(game_id=game_id, kind="critic").one()
     assert summ.source_review_count == 5
+
+
+# ── prompt cap (review count + per-review truncation) ────────────────────────
+
+def test_prompt_cap_limits_reviews_and_truncates_quotes(db):
+    """200-review game: LLM receives ≤ 25 reviews, each quote ≤ 1200 chars."""
+    captured: list = []
+
+    def _capture(messages):
+        captured.append(messages)
+        return json.dumps({"likes": "The gameplay is excellent.", "dislikes": "The campaign is too short."})
+
+    Session, _ = db
+    with Session() as s:
+        game = _make_game(s, external_id=40)
+        for i in range(200):
+            s.add(Review(
+                game_id=game.id,
+                kind="user",
+                author=f"User {i}",
+                score=50,
+                quote="x" * 2000,   # 2000-char quote — must be truncated
+                review_date="2024-01-01",
+                thumbs_up=i,
+            ))
+        s.flush()
+        generate_summaries(s, game, _capture)
+        s.commit()
+
+    assert len(captured) == 1   # one call for user kind (no critic reviews)
+    prompt = captured[0][1]["content"]  # role=user content
+
+    review_markers = re.findall(r'^\[\d+\]', prompt, re.MULTILINE)
+    assert len(review_markers) <= _PROMPT_MAX_REVIEWS
+
+    for block in prompt.split("\n\n"):
+        if re.match(r'^\[\d+\]', block):
+            _, _, quote = block.partition("\n")
+            assert len(quote) <= _REVIEW_MAX_CHARS

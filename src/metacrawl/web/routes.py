@@ -176,7 +176,9 @@ def trigger_crawl(
     request: Request,
     x_crawl_secret: str = Header(default=""),
 ):
-    if settings.crawl_secret and x_crawl_secret != settings.crawl_secret:
+    if not settings.crawl_secret:
+        raise HTTPException(status_code=403, detail="Crawl secret not configured")
+    if x_crawl_secret != settings.crawl_secret:
         raise HTTPException(status_code=403, detail="Invalid crawl secret")
     worker = request.app.state.worker
     started = worker.submit(trigger="manual")

@@ -15,11 +15,12 @@ SAMPLING:
   The rule name is stored in Summary.sampling_rule so downstream code can
   reason about what went into each summary.
 
-MALFORMED RESPONSE:
-  If the model returns something that is not {"likes": str, "dislikes": str},
-  the summary is silently dropped (logged at WARNING).  Storing garbage is
-  worse than storing nothing — a missing summary is obviously absent; bad text
-  would be read as fact.
+NULL SENTINEL CONTRACT:
+  The model may return null for likes or dislikes when that side genuinely
+  has nothing — e.g. uniformly negative reviews → likes: null.  null is
+  stored as-is and the card renders an explanatory line instead of a blank.
+  Empty string or a string shorter than _MIN_SUMMARY_LEN is the truncation
+  shape and is still rejected as a malformed response.
 """
 from __future__ import annotations
 
@@ -43,8 +44,8 @@ Reviews:
 {reviews_text}
 
 Reply with ONLY valid JSON (no markdown fences, no extra keys):
-{{"likes": "2-3 sentences on what reviewers praised",\
- "dislikes": "2-3 sentences on what reviewers criticised or found lacking"}}"""
+{{"likes": "2-3 sentences on what reviewers praised, or null if the reviews contain no praise",\
+ "dislikes": "2-3 sentences on what reviewers criticised or found lacking, or null if the reviews contain no criticism"}}"""
 
 # Sampling rule names stored in DB.
 _RULE_CRITIC = "top{n}_score"
@@ -72,38 +73,40 @@ def _sample_user(reviews: list[Review], n: int) -> tuple[list[Review], str]:
 
 
 _MIN_SUMMARY_LEN = 20
+_REVIEW_MAX_CHARS = 1200   # max chars per review quote sent to the LLM
+_PROMPT_MAX_REVIEWS = 25   # hard ceiling regardless of MC_LLM_MAX_REVIEWS
 
 
 def _parse_llm_response(text: str) -> dict | None:
     """
-    Return {"likes": str, "dislikes": str} or None if the response is
-    unparseable or invalid.
+    Return {"likes": str|None, "dislikes": str|None} or None if invalid.
 
-    Rejects responses where either field is empty, whitespace-only, or
-    shorter than _MIN_SUMMARY_LEN characters after stripping.  A half-summary
-    (e.g. {"likes": "", "dislikes": "..."}) must never reach the database —
-    it would be worse than no summary at all.
+    Valid:   both fields are strings ≥ _MIN_SUMMARY_LEN chars after strip.
+    Valid:   either field is JSON null — the model's sentinel for a side that
+             genuinely has nothing (e.g. uniformly negative reviews → likes: null).
+    Invalid: empty string or string shorter than _MIN_SUMMARY_LEN — that is
+             the truncation/hallucination shape, not the null sentinel.
+    Invalid: missing key, non-string/non-null value, unparseable JSON.
     """
     try:
         d = json.loads(text)
     except (json.JSONDecodeError, ValueError):
         return None
-    if (
-        isinstance(d, dict)
-        and isinstance(d.get("likes"), str)
-        and isinstance(d.get("dislikes"), str)
-        and len(d["likes"].strip()) >= _MIN_SUMMARY_LEN
-        and len(d["dislikes"].strip()) >= _MIN_SUMMARY_LEN
-    ):
-        return {"likes": d["likes"], "dislikes": d["dislikes"]}
-    return None
+    if not isinstance(d, dict) or "likes" not in d or "dislikes" not in d:
+        return None
+    for val in (d["likes"], d["dislikes"]):
+        if val is not None:
+            if not isinstance(val, str) or len(val.strip()) < _MIN_SUMMARY_LEN:
+                return None
+    return {"likes": d["likes"], "dislikes": d["dislikes"]}
 
 
 def _build_reviews_text(reviews: list[Review]) -> str:
     lines = []
     for i, r in enumerate(reviews, 1):
         pub = f" ({r.publication})" if r.publication else ""
-        lines.append(f"[{i}] Score: {r.score}/100{pub}\n{r.quote}")
+        quote = (r.quote or "")[:_REVIEW_MAX_CHARS]
+        lines.append(f"[{i}] Score: {r.score}/100{pub}\n{quote}")
     return "\n\n".join(lines)
 
 
@@ -146,17 +149,18 @@ def generate_summaries(
             ).scalars().all()
         )
 
+    _n = min(settings.llm_max_reviews, _PROMPT_MAX_REVIEWS)
     critic_written, c_failed = _summarise_kind(
         session, game, all_reviews,
         kind="critic",
-        sampler=lambda r: _sample_critic(r, settings.llm_max_reviews),
+        sampler=lambda r: _sample_critic(r, _n),
         llm=llm,
         already_exists="critic" in existing_kinds,
     )
     user_written, u_failed = _summarise_kind(
         session, game, all_reviews,
         kind="user",
-        sampler=lambda r: _sample_user(r, settings.llm_max_reviews),
+        sampler=lambda r: _sample_user(r, _n),
         llm=llm,
         already_exists="user" in existing_kinds,
     )
