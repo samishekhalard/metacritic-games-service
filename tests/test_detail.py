@@ -50,9 +50,13 @@ def test_parse_detail_video_url(game_html):
 
 
 def test_parse_detail_cover_url(game_html):
+    import re
     d = parse_detail(game_html, "elden-ring")
     assert d.cover_url is not None
-    assert d.cover_url.startswith("https://")
+    assert re.match(
+        r"https://www\.metacritic\.com/a/img/resize/[a-f0-9]{40}/catalog/",
+        d.cover_url,
+    ), f"expected hashed CDN URL, got: {d.cover_url}"
 
 
 def test_parse_detail_genres(game_html):

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..payload import parse
+from ..payload import parse, scrape_image_urls
 
 
 @dataclass
@@ -111,7 +111,7 @@ def _video_url(item: dict) -> str | None:
     return video.get("embedUrl") or video.get("manifestUrl") or None
 
 
-def _cover_url(item: dict) -> str | None:
+def _cover_url(item: dict, url_map: dict | None = None) -> str | None:
     images = item.get("images") or []
     for img in images:
         if not isinstance(img, dict):
@@ -121,6 +121,8 @@ def _cover_url(item: dict) -> str | None:
             return url
         bucket = img.get("bucketPath")
         if isinstance(bucket, str) and bucket:
+            if url_map and bucket in url_map:
+                return url_map[bucket]
             w = img.get("width") or 460
             h = img.get("height") or 215
             return f"https://www.metacritic.com/a/img/resize/{w}/{h}/catalog{bucket}"
@@ -176,6 +178,7 @@ def parse_detail(html: str, slug: str) -> GameDetail:
     `slug` is used to locate the correct loadPage key; it must match the
     game's Metacritic slug exactly.
     """
+    url_map = scrape_image_urls(html)
     root = parse(html)
     page_key = f"loadPage:games:{slug}:"
     page = (root.get("data") or {}).get(page_key)
@@ -210,7 +213,7 @@ def parse_detail(html: str, slug: str) -> GameDetail:
         detail.rating = item.get("rating") or None
         detail.developer, detail.publisher = _companies(item)
         detail.video_url = _video_url(item)
-        detail.cover_url = _cover_url(item)
+        detail.cover_url = _cover_url(item, url_map)
         detail.platforms = _platforms(item)
         detail.genres = _genres(item)
 

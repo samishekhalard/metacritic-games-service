@@ -175,11 +175,19 @@ def game_similar(request: Request, slug: str):
 def trigger_crawl(
     request: Request,
     x_crawl_secret: str = Header(default=""),
+    hx_request: str = Header(default=""),
 ):
-    if not settings.crawl_secret:
-        raise HTTPException(status_code=403, detail="Crawl secret not configured")
-    if x_crawl_secret != settings.crawl_secret:
-        raise HTTPException(status_code=403, detail="Invalid crawl secret")
+    # HTMX browser requests (HX-Request: true) are allowed without the secret.
+    # The crawl secret protects the programmatic endpoint from external cron
+    # abuse; the UI button is a legitimate admin feature and the browser never
+    # holds the secret.  Non-HTMX requests (GitHub Actions, curl) must present
+    # the secret.
+    is_htmx = hx_request.lower() == "true"
+    if not is_htmx:
+        if not settings.crawl_secret:
+            raise HTTPException(status_code=403, detail="Crawl secret not configured")
+        if x_crawl_secret != settings.crawl_secret:
+            raise HTTPException(status_code=403, detail="Invalid crawl secret")
     worker = request.app.state.worker
     started = worker.submit(trigger="manual")
     cls = "badge-running" if started else "badge-idle"

@@ -77,6 +77,18 @@ _REVIEW_MAX_CHARS = 1200   # max chars per review quote sent to the LLM
 _PROMPT_MAX_REVIEWS = 25   # hard ceiling regardless of MC_LLM_MAX_REVIEWS
 
 
+def _strip_fence(text: str) -> str:
+    """Remove ```json ... ``` or ``` ... ``` wrappers that some models add."""
+    t = text.strip()
+    if t.startswith("```"):
+        # Drop opening fence line (```json or just ```)
+        t = t[t.index("\n") + 1:] if "\n" in t else t[3:]
+        # Drop closing fence
+        if t.rstrip().endswith("```"):
+            t = t.rstrip()[:-3].rstrip()
+    return t
+
+
 def _parse_llm_response(text: str) -> dict | None:
     """
     Return {"likes": str|None, "dislikes": str|None} or None if invalid.
@@ -89,7 +101,7 @@ def _parse_llm_response(text: str) -> dict | None:
     Invalid: missing key, non-string/non-null value, unparseable JSON.
     """
     try:
-        d = json.loads(text)
+        d = json.loads(_strip_fence(text))
     except (json.JSONDecodeError, ValueError):
         return None
     if not isinstance(d, dict) or "likes" not in d or "dislikes" not in d:

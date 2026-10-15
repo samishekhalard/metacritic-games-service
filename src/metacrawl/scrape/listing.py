@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..payload import find_items, parse
+from ..payload import find_items, parse, scrape_image_urls
 
 IMAGE_BASE = "https://www.metacritic.com/a/img/resize/"
 
@@ -56,13 +56,14 @@ class GameSummary:
         return self.metascore is not None or self.critic_review_count > 0
 
 
-def _image_url(image: dict | None) -> str | None:
+def _image_url(image: dict | None, url_map: dict | None = None) -> str | None:
     """
-    Build a cover URL from the image object.
+    Return a cover URL for an image object.
 
-    The payload gives a bucket path rather than a URL; Metacritic's own pages
-    compose the CDN address from it. `imageUrl` is sometimes populated and is
-    preferred when it is.
+    Prefers the hashed CDN URL scraped from server-rendered <img> tags
+    (url_map, keyed by bucketPath) because imageUrl in the payload is always
+    null and the composed resize/{width}/{height}/… form returns 403 — the
+    CDN requires a content-hash token where width/height appear.
     """
     if not isinstance(image, dict):
         return None
@@ -72,6 +73,10 @@ def _image_url(image: dict | None) -> str | None:
     bucket_path = image.get("bucketPath")
     if not isinstance(bucket_path, str) or not bucket_path:
         return None
+    if url_map and bucket_path in url_map:
+        return url_map[bucket_path]
+    # Fallback: composed URL — CDN will 403 this, but keeps the field non-null
+    # so that fixing the hash later requires only a cover backfill, not a full re-crawl.
     width = image.get("width") or 460
     height = image.get("height") or 215
     return f"{IMAGE_BASE}{width}/{height}/catalog{bucket_path}"
@@ -109,7 +114,7 @@ def _genres(item: dict) -> list[str]:
     return names
 
 
-def to_summary(item: dict) -> GameSummary | None:
+def to_summary(item: dict, url_map: dict | None = None) -> GameSummary | None:
     """One payload item to a GameSummary. Returns None for non-game entries."""
     slug = item.get("slug")
     title = item.get("title")
@@ -131,7 +136,7 @@ def to_summary(item: dict) -> GameSummary | None:
         release_date=item.get("releaseDate") or None,
         premiere_year=item.get("premiereYear") or None,
         rating=item.get("rating") or None,
-        image_url=_image_url(item.get("image")),
+        image_url=_image_url(item.get("image"), url_map),
         genres=_genres(item),
         platforms=_platforms(item),
         metascore=critic.get("score"),
@@ -142,6 +147,7 @@ def to_summary(item: dict) -> GameSummary | None:
 
 def parse_listing(html: str) -> list[GameSummary]:
     """A listing page to the games it advertises, in page order."""
+    url_map = scrape_image_urls(html)
     items = find_items(parse(html))
-    summaries = [to_summary(item) for item in items if isinstance(item, dict)]
+    summaries = [to_summary(item, url_map) for item in items if isinstance(item, dict)]
     return [summary for summary in summaries if summary is not None]

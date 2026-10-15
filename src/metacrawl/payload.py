@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import re
+from html import unescape as _html_unescape
 from typing import Any
 
 PAYLOAD = re.compile(
@@ -114,6 +115,31 @@ def parse(html: str) -> dict:
     if not isinstance(root, dict):
         raise PayloadError(f"payload root is {type(root).__name__}, expected an object")
     return root
+
+
+_CDN_IMG = re.compile(
+    r"(https://www\.metacritic\.com/a/img/resize/[a-f0-9]{40}/catalog(/[^\"'?<>\s,]+))"
+)
+
+
+def scrape_image_urls(html: str) -> dict:
+    """
+    Build a bucketPath → CDN URL map by scanning the whole page for Metacritic
+    CDN URLs that carry the required content hash.
+
+    imageUrl in the Nuxt payload is always null; the hash only appears in
+    server-rendered markup and embedded JSON metadata.  The regex scans
+    anywhere in the page (img src, og:image JSON, etc.).
+
+    Returns e.g. {"/provider/6/12/6-1-824956-52.jpg": "https://…?auto=webp"}
+    First occurrence per bucketPath wins.
+    """
+    result: dict = {}
+    for m in _CDN_IMG.finditer(html):
+        bucket = m.group(2)          # /provider/…/filename.jpg  (no query)
+        if bucket not in result:
+            result[bucket] = _html_unescape(m.group(1))
+    return result
 
 
 def find_items(root: dict, marker: str = "items") -> list[dict]:

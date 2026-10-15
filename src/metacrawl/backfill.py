@@ -25,6 +25,10 @@ PRIORITY ORDER
 COMMAND LINE
 ────────────
   PYTHONPATH=src python -m metacrawl.backfill [--limit N] [--only-missing-summaries]
+  PYTHONPATH=src python -m metacrawl.backfill --covers-only [--limit N]
+      Re-fetches each game's detail page to update cover_url only.
+      Use this after deploying the cover-hash fix to repair the seeded games,
+      then re-export the seed: python -m metacrawl.seed export --processed-only
 """
 from __future__ import annotations
 
@@ -191,6 +195,54 @@ def _print_result(idx: int, total: int, r: GameResult) -> None:
         print(f"{prefix} {r.critic_reviews}c+{r.user_reviews}u  {c} {u}{llm}", flush=True)
 
 
+def _update_cover(session, game: Game, client: HttpClient) -> bool:
+    """Re-fetch the game detail page and update cover_url.  Returns True on success."""
+    from .api.detail import fetch_detail
+    try:
+        detail = fetch_detail(client, game.slug)
+    except Exception:
+        log.exception("cover fetch failed for %s", game.slug)
+        return False
+    if detail.cover_url:
+        game.cover_url = detail.cover_url
+    return True
+
+
+def run_covers_backfill(session_factory, *, limit: Optional[int] = None) -> None:
+    """Re-fetch cover URLs for all games, committing after each one."""
+    with session_factory() as session:
+        query = session.query(Game).order_by(Game.metascore.desc().nullslast(), Game.id)
+        if limit is not None:
+            query = query.limit(limit)
+        game_ids = [g.id for g in query.all()]
+
+    total = len(game_ids)
+    if total == 0:
+        print("No games in database.", flush=True)
+        return
+
+    lim_str = f" (limit {limit})" if limit is not None else ""
+    print(f"Updating covers for {total} games{lim_str}", flush=True)
+
+    ok = fail = 0
+    with HttpClient() as client:
+        for idx, game_id in enumerate(game_ids, 1):
+            with session_factory() as session:
+                game = session.get(Game, game_id)
+                if game is None:
+                    continue
+                success = _update_cover(session, game, client)
+                session.commit()
+            if success:
+                ok += 1
+                print(f"[{idx:4d}/{total}] {game.slug:<45} cover updated", flush=True)
+            else:
+                fail += 1
+                print(f"[{idx:4d}/{total}] {game.slug:<45} FAILED", flush=True)
+
+    print(f"\nDone: {ok} updated, {fail} failed", flush=True)
+
+
 def run_backfill(
     session_factory,
     *,
@@ -263,6 +315,10 @@ def _cli() -> None:
         "--only-missing-summaries", action="store_true",
         help="Only process games that have reviews but are missing summaries",
     )
+    parser.add_argument(
+        "--covers-only", action="store_true",
+        help="Only re-fetch cover URLs; skip reviews, summaries, and embeddings",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -278,11 +334,14 @@ def _cli() -> None:
     init_db(engine)
     session_factory = make_session_factory(engine)
 
-    run_backfill(
-        session_factory,
-        limit=args.limit,
-        only_missing_summaries=args.only_missing_summaries,
-    )
+    if args.covers_only:
+        run_covers_backfill(session_factory, limit=args.limit)
+    else:
+        run_backfill(
+            session_factory,
+            limit=args.limit,
+            only_missing_summaries=args.only_missing_summaries,
+        )
 
 
 if __name__ == "__main__":

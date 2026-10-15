@@ -57,3 +57,18 @@ def test_crawl_run_accepts_correct_secret(monkeypatch, crawl_client):
         "/api/crawl/run", headers={"X-Crawl-Secret": "correct-secret"}
     )
     assert resp.status_code == 200
+
+
+def test_crawl_run_allows_htmx_without_secret(monkeypatch, crawl_client):
+    """HTMX browser request (HX-Request: true) is allowed without X-Crawl-Secret.
+    The secret protects the programmatic endpoint; the UI button is a legit feature."""
+    monkeypatch.setattr("metacrawl.web.routes.settings.crawl_secret", "configured-secret")
+    resp = crawl_client.post("/api/crawl/run", headers={"HX-Request": "true"})
+    assert resp.status_code == 200
+
+
+def test_crawl_run_non_htmx_still_requires_secret(monkeypatch, crawl_client):
+    """Programmatic POST without HX-Request header must still require the secret."""
+    monkeypatch.setattr("metacrawl.web.routes.settings.crawl_secret", "configured-secret")
+    resp = crawl_client.post("/api/crawl/run")
+    assert resp.status_code == 403

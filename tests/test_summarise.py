@@ -21,6 +21,7 @@ from metacrawl.summarise import (
     _parse_llm_response,
     _sample_critic,
     _sample_user,
+    _strip_fence,
     generate_summaries,
 )
 
@@ -138,6 +139,50 @@ def test_parse_extra_keys_ok():
         '{"likes": "Excellent mechanics overall.", "dislikes": "Repetitive missions.", "score": 9}'
     )
     assert result is not None
+
+
+# ── _strip_fence / fenced JSON (Groq llama-3.3-70b-versatile wraps output) ───
+
+def test_strip_fence_removes_json_fence():
+    raw = '```json\n{"likes": "ok", "dislikes": "bad"}\n```'
+    assert _strip_fence(raw) == '{"likes": "ok", "dislikes": "bad"}'
+
+
+def test_strip_fence_removes_plain_fence():
+    raw = '```\n{"likes": "ok", "dislikes": "bad"}\n```'
+    assert _strip_fence(raw) == '{"likes": "ok", "dislikes": "bad"}'
+
+
+def test_strip_fence_passthrough_for_plain_json():
+    raw = '{"likes": "ok", "dislikes": "bad"}'
+    assert _strip_fence(raw) == raw
+
+
+def test_parse_accepts_fenced_json():
+    """Groq llama-3.3-70b-versatile wraps output in ```json fences despite the prompt."""
+    raw = (
+        "```json\n"
+        '{"likes": "Fluid combat and stunning open-world environments.", '
+        '"dislikes": "Occasional frame-rate drops on older hardware."}\n'
+        "```"
+    )
+    result = _parse_llm_response(raw)
+    assert result is not None
+    assert result["likes"] == "Fluid combat and stunning open-world environments."
+    assert result["dislikes"] == "Occasional frame-rate drops on older hardware."
+
+
+def test_parse_fenced_null_sentinel():
+    raw = '```json\n{"likes": null, "dislikes": "Relentless difficulty with no accessibility options."}\n```'
+    result = _parse_llm_response(raw)
+    assert result is not None
+    assert result["likes"] is None
+
+
+def test_parse_fenced_bad_content_still_rejected():
+    """Fence-stripping must not weaken validation — short strings still rejected."""
+    raw = '```json\n{"likes": "fun", "dislikes": "bad"}\n```'
+    assert _parse_llm_response(raw) is None
 
 
 # ── Sampling ──────────────────────────────────────────────────────────────────

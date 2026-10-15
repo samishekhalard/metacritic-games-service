@@ -5,6 +5,8 @@ import json
 
 import pytest
 
+import re
+
 from metacrawl.scrape.listing import GameSummary, PlatformScore, _image_url, parse_listing, to_summary
 
 
@@ -113,7 +115,15 @@ def test_image_url_prefers_direct_url():
     assert _image_url(img) == "https://cdn.example.com/cover.jpg"
 
 
-def test_image_url_falls_back_to_bucket_path():
+def test_image_url_uses_url_map_over_composition():
+    img = {"imageUrl": None, "bucketPath": "/provider/6/12/6-1-1077396-52.jpg",
+           "width": 460, "height": 215}
+    hashed = "https://www.metacritic.com/a/img/resize/aac46445b00acb384d2342af93103c7c29918d33/catalog/provider/6/12/6-1-1077396-52.jpg?auto=webp"
+    url_map = {"/provider/6/12/6-1-1077396-52.jpg": hashed}
+    assert _image_url(img, url_map) == hashed
+
+
+def test_image_url_falls_back_to_bucket_path_when_no_map():
     img = {"imageUrl": None, "bucketPath": "/provider/7/2/123.jpg", "width": 373, "height": 560}
     url = _image_url(img)
     assert url == "https://www.metacritic.com/a/img/resize/373/560/catalog/provider/7/2/123.jpg"
@@ -122,3 +132,13 @@ def test_image_url_falls_back_to_bucket_path():
 def test_image_url_none_for_null_image():
     assert _image_url(None) is None
     assert _image_url({}) is None
+
+
+def test_browse_cover_url_is_hashed_cdn_url(browse_html):
+    """parse_listing must extract the hashed CDN URL, not a composed width/height form."""
+    games = parse_listing(browse_html)
+    assert games[0].image_url is not None
+    assert re.match(
+        r"https://www\.metacritic\.com/a/img/resize/[a-f0-9]{40}/catalog/",
+        games[0].image_url,
+    ), f"expected hashed CDN URL, got: {games[0].image_url}"
