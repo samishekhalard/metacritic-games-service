@@ -123,10 +123,33 @@ def test_image_url_uses_url_map_over_composition():
     assert _image_url(img, url_map) == hashed
 
 
-def test_image_url_falls_back_to_bucket_path_when_no_map():
+def test_image_url_returns_none_without_map():
+    """No url_map means no hash available — composed form 403s, so return None."""
     img = {"imageUrl": None, "bucketPath": "/provider/7/2/123.jpg", "width": 373, "height": 560}
-    url = _image_url(img)
-    assert url == "https://www.metacritic.com/a/img/resize/373/560/catalog/provider/7/2/123.jpg"
+    assert _image_url(img) is None
+
+
+def test_api_path_image_url_is_none():
+    """Games from the finder JSON API have imageUrl=null and no HTML to scrape.
+    to_summary() with no url_map must yield image_url=None (placeholder),
+    not a broken composed URL that 403s on every request."""
+    item = {
+        "id": 1087502,
+        "slug": "over-the-hill",
+        "title": "Over the Hill",
+        "image": {
+            "imageUrl": None,
+            "bucketPath": "/provider/6/12/6-1-1087502-52.jpg",
+            "width": 460,
+            "height": 215,
+            "bucketType": "catalog",
+        },
+    }
+    s = to_summary(item)   # no url_map — simulates the finder JSON API path
+    assert s is not None
+    assert s.image_url is None, (
+        f"expected None for API path with no url_map, got {s.image_url!r}"
+    )
 
 
 def test_image_url_none_for_null_image():

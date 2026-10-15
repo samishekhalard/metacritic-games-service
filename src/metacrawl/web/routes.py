@@ -3,6 +3,9 @@ Web routes: game list, game detail, crawl trigger/status, health check.
 """
 from __future__ import annotations
 
+import hashlib as _hashlib
+import hmac as _hmac
+import time as _time
 from pathlib import Path
 
 import httpx
@@ -18,6 +21,51 @@ from ..similar import find_similar
 
 _TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+
+_TOKEN_TTL = 300  # seconds
+
+
+def mint_crawl_token(ttl: int = _TOKEN_TTL) -> str:
+    """
+    Mint a short-lived HMAC-SHA256 token for the browser crawl button.
+    Format: "{expiry_unix}:{sha256_hex}"
+    Returns "" when MC_CRAWL_SECRET is not configured.
+    """
+    if not settings.crawl_secret:
+        return ""
+    expiry = int(_time.time()) + ttl
+    sig = _hmac.new(
+        settings.crawl_secret.encode(),
+        f"crawl:{expiry}".encode(),
+        _hashlib.sha256,
+    ).hexdigest()
+    return f"{expiry}:{sig}"
+
+
+def _verify_crawl_token(token: str) -> bool:
+    """Return True iff the token has a valid signature and has not expired."""
+    if not settings.crawl_secret or not token:
+        return False
+    parts = token.split(":", 1)
+    if len(parts) != 2:
+        return False
+    try:
+        expiry = int(parts[0])
+    except ValueError:
+        return False
+    if _time.time() > expiry:
+        return False
+    expected = _hmac.new(
+        settings.crawl_secret.encode(),
+        f"crawl:{expiry}".encode(),
+        _hashlib.sha256,
+    ).hexdigest()
+    return _hmac.compare_digest(expected, parts[1])
+
+
+# Expose token minting to Jinja2 templates so base.html can embed it in
+# the crawl button's hx-headers without the secret ever reaching the browser.
+templates.env.globals["mint_crawl_token"] = mint_crawl_token
 
 router = APIRouter()
 
@@ -175,15 +223,18 @@ def game_similar(request: Request, slug: str):
 def trigger_crawl(
     request: Request,
     x_crawl_secret: str = Header(default=""),
-    hx_request: str = Header(default=""),
+    x_crawl_token: str = Header(default=""),
 ):
-    # HTMX browser requests (HX-Request: true) are allowed without the secret.
-    # The crawl secret protects the programmatic endpoint from external cron
-    # abuse; the UI button is a legitimate admin feature and the browser never
-    # holds the secret.  Non-HTMX requests (GitHub Actions, curl) must present
-    # the secret.
-    is_htmx = hx_request.lower() == "true"
-    if not is_htmx:
+    if x_crawl_token:
+        # Browser path: page-render HMAC token, valid for _TOKEN_TTL seconds.
+        # The token is minted server-side and embedded in hx-headers; the raw
+        # secret never reaches the browser.
+        if not settings.crawl_secret:
+            raise HTTPException(status_code=403, detail="Crawl secret not configured")
+        if not _verify_crawl_token(x_crawl_token):
+            raise HTTPException(status_code=403, detail="Invalid or expired crawl token")
+    else:
+        # Programmatic path: static shared secret (GitHub Actions, curl).
         if not settings.crawl_secret:
             raise HTTPException(status_code=403, detail="Crawl secret not configured")
         if x_crawl_secret != settings.crawl_secret:

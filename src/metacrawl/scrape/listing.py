@@ -18,8 +18,6 @@ from dataclasses import dataclass, field
 
 from ..payload import find_items, parse, scrape_image_urls
 
-IMAGE_BASE = "https://www.metacritic.com/a/img/resize/"
-
 
 @dataclass
 class PlatformScore:
@@ -75,11 +73,11 @@ def _image_url(image: dict | None, url_map: dict | None = None) -> str | None:
         return None
     if url_map and bucket_path in url_map:
         return url_map[bucket_path]
-    # Fallback: composed URL — CDN will 403 this, but keeps the field non-null
-    # so that fixing the hash later requires only a cover backfill, not a full re-crawl.
-    width = image.get("width") or 460
-    height = image.get("height") or 215
-    return f"{IMAGE_BASE}{width}/{height}/catalog{bucket_path}"
+    # No hash available (API path has no HTML to scrape).  The composed
+    # resize/{w}/{h}/… form always 403s; return None so the card shows a
+    # placeholder instead of a broken image.  The detail fetch will supply
+    # the real hashed URL and overwrite this None.
+    return None
 
 
 def _platforms(item: dict) -> list[PlatformScore]:

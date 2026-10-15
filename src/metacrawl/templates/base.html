@@ -18,6 +18,7 @@
           hx-target="#crawl-badge"></span>
     <button class="btn"
             hx-post="/api/crawl/run"
+            hx-headers='{"X-Crawl-Token": "{{ mint_crawl_token() }}"}'
             hx-swap="outerHTML"
             hx-target="#crawl-badge">Run crawl</button>
   </div>

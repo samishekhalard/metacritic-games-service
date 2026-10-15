@@ -59,16 +59,38 @@ def test_crawl_run_accepts_correct_secret(monkeypatch, crawl_client):
     assert resp.status_code == 200
 
 
-def test_crawl_run_allows_htmx_without_secret(monkeypatch, crawl_client):
-    """HTMX browser request (HX-Request: true) is allowed without X-Crawl-Secret.
-    The secret protects the programmatic endpoint; the UI button is a legit feature."""
-    monkeypatch.setattr("metacrawl.web.routes.settings.crawl_secret", "configured-secret")
-    resp = crawl_client.post("/api/crawl/run", headers={"HX-Request": "true"})
+def test_crawl_run_allows_valid_token(monkeypatch, crawl_client):
+    """Valid HMAC token (minted server-side for the button) → 200."""
+    monkeypatch.setattr("metacrawl.web.routes.settings.crawl_secret", "test-secret")
+    from metacrawl.web.routes import mint_crawl_token
+    token = mint_crawl_token()
+    resp = crawl_client.post("/api/crawl/run", headers={"X-Crawl-Token": token})
     assert resp.status_code == 200
 
 
-def test_crawl_run_non_htmx_still_requires_secret(monkeypatch, crawl_client):
-    """Programmatic POST without HX-Request header must still require the secret."""
-    monkeypatch.setattr("metacrawl.web.routes.settings.crawl_secret", "configured-secret")
-    resp = crawl_client.post("/api/crawl/run")
+def test_crawl_run_rejects_expired_token(monkeypatch, crawl_client):
+    """Token with expiry in the past → 403."""
+    monkeypatch.setattr("metacrawl.web.routes.settings.crawl_secret", "test-secret")
+    import hashlib, hmac, time
+    expiry = int(time.time()) - 1
+    sig = hmac.new(b"test-secret", f"crawl:{expiry}".encode(), hashlib.sha256).hexdigest()
+    token = f"{expiry}:{sig}"
+    resp = crawl_client.post("/api/crawl/run", headers={"X-Crawl-Token": token})
+    assert resp.status_code == 403
+
+
+def test_crawl_run_rejects_forged_token(monkeypatch, crawl_client):
+    """Correct expiry but wrong signature → 403."""
+    monkeypatch.setattr("metacrawl.web.routes.settings.crawl_secret", "test-secret")
+    import time
+    expiry = int(time.time()) + 300
+    token = f"{expiry}:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    resp = crawl_client.post("/api/crawl/run", headers={"X-Crawl-Token": token})
+    assert resp.status_code == 403
+
+
+def test_crawl_run_rejects_bare_hx_request(monkeypatch, crawl_client):
+    """HX-Request: true alone is not authentication — the HMAC token is required."""
+    monkeypatch.setattr("metacrawl.web.routes.settings.crawl_secret", "test-secret")
+    resp = crawl_client.post("/api/crawl/run", headers={"HX-Request": "true"})
     assert resp.status_code == 403

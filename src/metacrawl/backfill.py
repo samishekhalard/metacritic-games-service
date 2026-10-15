@@ -33,6 +33,7 @@ COMMAND LINE
 from __future__ import annotations
 
 import logging
+import re
 import sys
 from dataclasses import dataclass
 from typing import Optional
@@ -208,13 +209,26 @@ def _update_cover(session, game: Game, client: HttpClient) -> bool:
     return True
 
 
+_COVER_HASH_RE = re.compile(r"/resize/[a-f0-9]{40}/")
+
+
+def _needs_cover(cover_url: "str | None") -> bool:
+    """True when cover_url is missing or is the broken composed form (no hash)."""
+    return not cover_url or not _COVER_HASH_RE.search(cover_url)
+
+
 def run_covers_backfill(session_factory, *, limit: Optional[int] = None) -> None:
-    """Re-fetch cover URLs for all games, committing after each one."""
+    """Re-fetch cover URLs for games that have a missing or broken cover."""
     with session_factory() as session:
-        query = session.query(Game).order_by(Game.metascore.desc().nullslast(), Game.id)
+        # Only process games without a valid hashed CDN URL.
+        all_games = (
+            session.query(Game)
+            .order_by(Game.metascore.desc().nullslast(), Game.id)
+            .all()
+        )
+        game_ids = [g.id for g in all_games if _needs_cover(g.cover_url)]
         if limit is not None:
-            query = query.limit(limit)
-        game_ids = [g.id for g in query.all()]
+            game_ids = game_ids[:limit]
 
     total = len(game_ids)
     if total == 0:
@@ -231,14 +245,15 @@ def run_covers_backfill(session_factory, *, limit: Optional[int] = None) -> None
                 game = session.get(Game, game_id)
                 if game is None:
                     continue
+                slug = game.slug  # capture before session closes
                 success = _update_cover(session, game, client)
                 session.commit()
             if success:
                 ok += 1
-                print(f"[{idx:4d}/{total}] {game.slug:<45} cover updated", flush=True)
+                print(f"[{idx:4d}/{total}] {slug:<45} cover updated", flush=True)
             else:
                 fail += 1
-                print(f"[{idx:4d}/{total}] {game.slug:<45} FAILED", flush=True)
+                print(f"[{idx:4d}/{total}] {slug:<45} FAILED", flush=True)
 
     print(f"\nDone: {ok} updated, {fail} failed", flush=True)
 

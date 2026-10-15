@@ -123,9 +123,7 @@ def _cover_url(item: dict, url_map: dict | None = None) -> str | None:
         if isinstance(bucket, str) and bucket:
             if url_map and bucket in url_map:
                 return url_map[bucket]
-            w = img.get("width") or 460
-            h = img.get("height") or 215
-            return f"https://www.metacritic.com/a/img/resize/{w}/{h}/catalog{bucket}"
+            # Hash not in page markup — composed form 403s; return None.
     return None
 
 
