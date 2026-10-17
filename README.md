@@ -54,8 +54,8 @@ PYTHONPATH=src python -m metacrawl.crawl --source scored --pages 5
 PYTHONPATH=src python -m metacrawl.backfill
 
 # Tests
-make test          # 173 unit tests
-make e2e           # 27 Playwright tests (requires a running server on localhost:8000)
+make test          # 188 unit tests
+make e2e           # 28 Playwright tests (requires a running server on localhost:8000)
 ```
 
 Required environment variables:
@@ -154,8 +154,8 @@ Render host has no persistent disk — every restart reseeds from
 | Games with one summary (critic or user) | 67 |
 | Reviews stored | 2,712 |
 | Embeddings in seed | 171 |
-| Unit tests passing | 173 |
-| Playwright E2E tests passing | 27 |
+| Unit tests passing | 188 |
+| Playwright E2E tests passing | 28 |
 
 Summaries generated locally with **qwen2.5:7b** via Ollama.
 Embeddings generated locally with **nomic-embed-text** via Ollama.
@@ -198,11 +198,11 @@ callers such as GitHub Actions. The raw secret never reaches the browser.
 
 ## Testing
 
-**173 unit tests** cover the crawler, payload parser, image proxy, seed
+**188 unit tests** cover the crawler, payload parser, image proxy, seed
 export/import, and web routes. They run offline — no network calls, no running
 server required.
 
-**27 Playwright E2E tests** (`make e2e`) drive a real Chromium browser against
+**28 Playwright E2E tests** (`make e2e`) drive a real Chromium browser against
 a live server. The suite reads `BASE_URL` from the environment and runs
 identically against `localhost:8000` and `https://metacrawl.onrender.com`.
 Notable assertions:
