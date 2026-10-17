@@ -305,6 +305,35 @@ def test_detail_ai_summaries(page, base_url, slug, expected_kinds):
 
 
 # ---------------------------------------------------------------------------
+# 12b. AI Summaries section present with explanatory text when no reviews
+# ---------------------------------------------------------------------------
+
+def test_detail_no_reviews_shows_summary_section(page, base_url):
+    """
+    niph has no reviews of any kind.
+    The AI Summaries section must still be rendered and must contain the
+    explanatory 'No reviews yet' line rather than being omitted entirely.
+    """
+    slug = "niph"
+    url = _open_detail(page, base_url, slug)
+
+    summaries_section = page.locator(".detail-section:has(h2:text('AI Summaries'))")
+    assert summaries_section.count(), (
+        f"AI Summaries section missing entirely for {slug!r} — "
+        f"it must always be rendered, even when there are no reviews.\n"
+        f"  url: {url}"
+    )
+
+    section_text = summaries_section.inner_text()
+    assert "no reviews yet" in section_text.lower(), (
+        f"Expected 'No reviews yet' explanatory text in AI Summaries section  "
+        f"game={slug!r}\n"
+        f"  section text: {section_text!r}\n"
+        f"  url: {url}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # 13. Similar games: at least one result, each links to a page returning 200,
 #     and the similarity method badge is visible
 # ---------------------------------------------------------------------------

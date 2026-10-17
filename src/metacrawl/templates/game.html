@@ -72,9 +72,11 @@
   </section>
   {% endif %}
 
-  {% if summaries %}
   <section class="detail-section">
     <h2>AI Summaries</h2>
+    {% if not critic_reviews and not user_reviews %}
+    <p class="summary-absent">No reviews yet — summaries are generated once critics or players review this game.</p>
+    {% else %}
     {% for kind in ["critic", "user"] %}
     {% if kind in summaries %}
     {% set s = summaries[kind] %}
@@ -102,10 +104,14 @@
         {% if s.generated_at %}· {{ s.generated_at.strftime("%Y-%m-%d") }}{% endif %}
       </p>
     </div>
+    {% elif kind == "critic" and not critic_reviews %}
+    <p class="summary-absent">No critic summary — this game has no critic reviews yet.</p>
+    {% elif kind == "user" and not user_reviews %}
+    <p class="summary-absent">No user summary — this game has no user reviews yet.</p>
     {% endif %}
     {% endfor %}
+    {% endif %}
   </section>
-  {% endif %}
 
   {% if critic_reviews %}
   <section class="detail-section">
