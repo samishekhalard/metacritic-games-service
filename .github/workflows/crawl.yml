@@ -1,0 +1,25 @@
+name: hourly-crawl
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  crawl:
+    if: github.event.schedule == '17 * * * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger crawl
+        run: |
+          curl -sS -f -X POST https://metacrawl.onrender.com/api/crawl/run \
+            -H "X-Crawl-Secret: ${{ secrets.CRAWL_SECRET }}" \
+            --max-time 180 --retry 3 --retry-delay 30 --retry-connrefused
+
+  keep-warm:
+    if: github.event.schedule == '*/10 * * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping health
+        run: curl -sS -o /dev/null --max-time 120 --retry 2 https://metacrawl.onrender.com/health
